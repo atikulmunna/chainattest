@@ -1,0 +1,13 @@
+[project]
+name = "chain-attest-cli"
+version = "0.1.0"
+description = "CLI scaffold for ChainAttest"
+requires-python = ">=3.11"
+dependencies = [
+  "typer>=0.12.0",
+  "rich>=13.7.0"
+]
+
+[project.scripts]
+chain-attest = "chain_attest.main:app"
+
