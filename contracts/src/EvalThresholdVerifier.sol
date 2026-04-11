@@ -22,9 +22,11 @@ contract EvalThresholdVerifier is EIP712 {
     error UnauthorizedEvaluator(address evaluator);
     error InvalidEvaluatorSignature(address expected, address recovered);
     error EvaluatorKeyMismatch(bytes32 expected, bytes32 actual);
+    error InvalidTranscriptCommitment(bytes32 expected, bytes32 actual);
+    error InvalidTranscriptSampleCount(uint32 sampleCount);
 
     bytes32 public constant EVAL_CLAIM_ATTESTATION_TYPEHASH = keccak256(
-        "EvalClaimAttestation(uint256 sourceChainId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
+        "EvalClaimAttestation(uint256 sourceChainId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
     );
 
     struct VerifiedEvalClaim {
@@ -94,6 +96,7 @@ contract EvalThresholdVerifier is EIP712 {
         sourceRecordHash;
         sourceBlockNumber;
 
+        _verifyTranscriptStructure(pkg);
         _verifyEvaluatorAttestation(pkg);
 
         if (
@@ -180,6 +183,11 @@ contract EvalThresholdVerifier is EIP712 {
                 pkg.attestationId,
                 pkg.benchmarkDigest,
                 pkg.evalTranscriptDigest,
+                pkg.datasetSplitDigest,
+                pkg.inferenceConfigDigest,
+                pkg.randomnessSeedDigest,
+                pkg.transcriptSampleCount,
+                pkg.transcriptVersion,
                 pkg.scoreCommitment,
                 pkg.thresholdBps,
                 pkg.evaluator,
@@ -189,5 +197,27 @@ contract EvalThresholdVerifier is EIP712 {
             )
         );
         return _hashTypedDataV4(structHash);
+    }
+
+    function _verifyTranscriptStructure(ChainAttestTypes.EvalRelayPackage memory pkg) internal pure {
+        if (pkg.transcriptSampleCount == 0) {
+            revert InvalidTranscriptSampleCount(pkg.transcriptSampleCount);
+        }
+
+        bytes32 expectedDigest = keccak256(
+            abi.encode(
+                pkg.attestationId,
+                pkg.benchmarkDigest,
+                pkg.datasetSplitDigest,
+                pkg.inferenceConfigDigest,
+                pkg.randomnessSeedDigest,
+                pkg.transcriptSampleCount,
+                pkg.transcriptVersion
+            )
+        );
+
+        if (pkg.evalTranscriptDigest != expectedDigest) {
+            revert InvalidTranscriptCommitment(expectedDigest, pkg.evalTranscriptDigest);
+        }
     }
 }

@@ -209,6 +209,30 @@ Constraints:
 - `salt` is a field element sampled uniformly from a cryptographically secure RNG
 - the evaluator signs a typed evaluation statement over the same attestation and benchmark context
 
+### 4.6 Transcript Commitment Layout
+
+The transcript digest carried by eval packages must not be an opaque hash with no stated semantics.
+
+For the current structured transcript format, the destination verifier recomputes:
+
+```text
+evalTranscriptDigest = keccak256(abi.encode(
+  attestationId,
+  benchmarkDigest,
+  datasetSplitDigest,
+  inferenceConfigDigest,
+  randomnessSeedDigest,
+  transcriptSampleCount,
+  transcriptVersion
+))
+```
+
+Requirements:
+
+- `transcriptSampleCount > 0`
+- `transcriptVersion` identifies the schema version for the transcript summary
+- the evaluator statement must cover the same transcript fields
+
 ---
 
 ## 5. Source-Chain Contract Interfaces
@@ -809,6 +833,11 @@ struct EvalRelayPackage {
     uint256 attestationId;
     bytes32 benchmarkDigest;
     bytes32 evalTranscriptDigest;
+    bytes32 datasetSplitDigest;
+    bytes32 inferenceConfigDigest;
+    bytes32 randomnessSeedDigest;
+    uint32 transcriptSampleCount;
+    uint32 transcriptVersion;
     uint256 scoreCommitment;
     uint32 thresholdBps;
     address evaluator;
