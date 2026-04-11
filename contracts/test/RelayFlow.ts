@@ -73,6 +73,11 @@ function evalPackageType() {
     uint256 attestationId,
     bytes32 benchmarkDigest,
     bytes32 evalTranscriptDigest,
+    bytes32 datasetSplitDigest,
+    bytes32 inferenceConfigDigest,
+    bytes32 randomnessSeedDigest,
+    uint32 transcriptSampleCount,
+    uint32 transcriptVersion,
     uint256 scoreCommitment,
     uint32 thresholdBps,
     address evaluator,
@@ -90,6 +95,31 @@ function evalPackageType() {
 
 function evaluatorKeyId(address: string): string {
   return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address"], [address]));
+}
+
+function computeTranscriptDigest(
+  attestationId: bigint,
+  benchmarkDigest: string,
+  datasetSplitDigest: string,
+  inferenceConfigDigest: string,
+  randomnessSeedDigest: string,
+  transcriptSampleCount: number,
+  transcriptVersion: number
+): string {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint256", "bytes32", "bytes32", "bytes32", "bytes32", "uint32", "uint32"],
+      [
+        attestationId,
+        benchmarkDigest,
+        datasetSplitDigest,
+        inferenceConfigDigest,
+        randomnessSeedDigest,
+        transcriptSampleCount,
+        transcriptVersion
+      ]
+    )
+  );
 }
 
 async function signApproval(adapter: any, signer: any, pkg: any, recordHash: string) {
@@ -142,6 +172,11 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
       { name: "attestationId", type: "uint256" },
       { name: "benchmarkDigest", type: "bytes32" },
       { name: "evalTranscriptDigest", type: "bytes32" },
+      { name: "datasetSplitDigest", type: "bytes32" },
+      { name: "inferenceConfigDigest", type: "bytes32" },
+      { name: "randomnessSeedDigest", type: "bytes32" },
+      { name: "transcriptSampleCount", type: "uint32" },
+      { name: "transcriptVersion", type: "uint32" },
       { name: "scoreCommitment", type: "uint256" },
       { name: "thresholdBps", type: "uint32" },
       { name: "evaluator", type: "address" },
@@ -156,6 +191,11 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
     attestationId: pkg.attestationId,
     benchmarkDigest: pkg.benchmarkDigest,
     evalTranscriptDigest: pkg.evalTranscriptDigest,
+    datasetSplitDigest: pkg.datasetSplitDigest,
+    inferenceConfigDigest: pkg.inferenceConfigDigest,
+    randomnessSeedDigest: pkg.randomnessSeedDigest,
+    transcriptSampleCount: pkg.transcriptSampleCount,
+    transcriptVersion: pkg.transcriptVersion,
     scoreCommitment: pkg.scoreCommitment,
     thresholdBps: pkg.thresholdBps,
     evaluator: pkg.evaluator,
@@ -267,7 +307,20 @@ describe("RelayFlow", function () {
     const evalProof = normalizeProof(readJson("eval_proof.json"));
     const evalSignals = normalizeSignals(readJson("eval_public.json"));
     const benchmarkDigest = ethers.keccak256(ethers.toUtf8Bytes("benchmark"));
-    const evalTranscriptDigest = ethers.keccak256(ethers.toUtf8Bytes("transcript"));
+    const datasetSplitDigest = ethers.keccak256(ethers.toUtf8Bytes("dataset-split"));
+    const inferenceConfigDigest = ethers.keccak256(ethers.toUtf8Bytes("inference-config"));
+    const randomnessSeedDigest = ethers.keccak256(ethers.toUtf8Bytes("randomness-seed"));
+    const transcriptSampleCount = 128;
+    const transcriptVersion = 1;
+    const evalTranscriptDigest = computeTranscriptDigest(
+      42n,
+      benchmarkDigest,
+      datasetSplitDigest,
+      inferenceConfigDigest,
+      randomnessSeedDigest,
+      transcriptSampleCount,
+      transcriptVersion
+    );
     const evaluatorSigner = options.evaluatorSigner ?? signer3;
     const pkg: any = {
       packageVersion: 1,
@@ -279,6 +332,11 @@ describe("RelayFlow", function () {
       attestationId: 42n,
       benchmarkDigest,
       evalTranscriptDigest,
+      datasetSplitDigest,
+      inferenceConfigDigest,
+      randomnessSeedDigest,
+      transcriptSampleCount,
+      transcriptVersion,
       scoreCommitment: evalSignals[3],
       thresholdBps: Number(evalSignals[4]),
       evaluator: await evaluatorSigner.getAddress(),
@@ -380,6 +438,25 @@ describe("RelayFlow", function () {
     await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.emit(
       fixture.evalVerifier,
       "EvalClaimPackageVerified"
+    );
+  });
+
+  it("rejects eval packages with mismatched transcript commitments", async function () {
+    const fixture = await deployFixture();
+    const attPkg = await buildSignedAttestationPackage(fixture);
+    const attEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attPkg]);
+    await fixture.semanticVerifier.verifyAttestationPackage(attEncoded);
+
+    const evalPkg = await buildSignedEvalPackage(fixture, {
+      packageOverrides: {
+        transcriptSampleCount: 256
+      }
+    });
+    const evalEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalPkg]);
+
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "InvalidTranscriptCommitment"
     );
   });
 

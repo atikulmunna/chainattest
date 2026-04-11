@@ -57,6 +57,11 @@ library ChainAttestTypes {
         uint256 attestationId;
         bytes32 benchmarkDigest;
         bytes32 evalTranscriptDigest;
+        bytes32 datasetSplitDigest;
+        bytes32 inferenceConfigDigest;
+        bytes32 randomnessSeedDigest;
+        uint32 transcriptSampleCount;
+        uint32 transcriptVersion;
         uint256 scoreCommitment;
         uint32 thresholdBps;
         address evaluator;
