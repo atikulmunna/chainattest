@@ -194,13 +194,20 @@ The implementation must not reorder these fields without a new circuit version.
 The evaluation score commitment layout for `eval-v1` shall be:
 
 ```text
-scoreCommitment = Poseidon([exactScore, salt])
+scoreCommitment = Poseidon([
+  attestationId,
+  field(benchmarkDigest),
+  field(evalTranscriptDigest),
+  exactScore,
+  salt
+])
 ```
 
 Constraints:
 
 - `exactScore` is basis points in `[0, 10000]`
 - `salt` is a field element sampled uniformly from a cryptographically secure RNG
+- the evaluator signs a typed evaluation statement over the same attestation and benchmark context
 
 ---
 
@@ -804,7 +811,9 @@ struct EvalRelayPackage {
     bytes32 evalTranscriptDigest;
     uint256 scoreCommitment;
     uint32 thresholdBps;
+    address evaluator;
     bytes32 evaluatorKeyId;
+    bytes evaluatorSignature;
     uint256 claimedAtBlock;
     bytes32 adapterId;
     uint256 finalityDelayBlocks;
@@ -1105,4 +1114,3 @@ must produce a new version identifier.
 - register eval claim -> prove threshold -> relay -> verify
 - revoke attestation -> relay revoke -> destination shows revoked
 - restart coordinator mid-job -> recover and complete
-
