@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chainattest.local/schemas/eval_claim.schema.json",
+  "title": "EvalClaimRecord",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_chain_id",
+    "attestation_id",
+    "benchmark_id",
+    "benchmark_digest",
+    "eval_transcript_digest",
+    "score_commitment",
+    "threshold_bps",
+    "evaluator_id",
+    "claimed_at_block"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "source_chain_id": { "type": "integer" },
+    "attestation_id": { "type": "integer" },
+    "benchmark_id": { "type": "string" },
+    "benchmark_digest": { "type": "string" },
+    "eval_transcript_digest": { "type": "string" },
+    "score_commitment": { "type": "string" },
+    "threshold_bps": { "type": "integer" },
+    "evaluator_id": { "type": "string" },
+    "claimed_at_block": { "type": "integer" }
+  }
+}
+
