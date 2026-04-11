@@ -1,29 +1,61 @@
 # ChainAttest
 
-ChainAttest is a cross-chain attestation system for machine learning provenance, deployment evidence, and privacy-preserving evaluation claims.
+ChainAttest is a research-oriented protocol and reference implementation for cross-chain machine learning attestations.
 
-Instead of moving assets, ChainAttest relays typed ML attestations across chains and verifies two distinct proof layers:
+The system is designed for cases where the payload is not an asset transfer, but structured ML evidence: model provenance, training commitments, deployment metadata, and privacy-preserving evaluation claims. ChainAttest combines source-authenticity checks, typed relay packages, and zero-knowledge verification so that attestations created on one chain can be verified and consumed on another.
 
-- source authenticity through a committee-backed relay package
-- semantic attestation integrity through Groth16 proofs over ML-specific commitments
-- private evaluation threshold claims through Groth16 proofs bound to benchmark and transcript context
+## Core Ideas
 
-## What Is In This Repository
+- Typed ML attestations instead of token transfers or generic message passing
+- Semantic verification over ML-specific commitments such as model, dataset, and training metadata
+- Privacy-preserving evaluation threshold proofs
+- Explicit evaluator attestations for evaluation claims
+- A path toward public compliance evidence for AI provenance and auditability
 
-- `SRS_ChainAttest_Revised.md`: revised system requirements specification
-- `ChainAttest_Protocol_and_Interface_Spec.md`: protocol and interface details for implementation
-- `contracts/`: Solidity contracts, generated verifiers, and Hardhat tests
-- `circuits/`: Circom circuits, proving artifacts, and verifier exports
-- `cli/`: Python CLI scaffold
-- `coordinator/`: coordinator service scaffold
-- `committee/`: signer service scaffold
-- `schemas/`: JSON schemas for attestation and evaluation claim payloads
+## Repository Contents
 
-## Current Status
+- `SRS_ChainAttest_Revised.md`
+  Revised system requirements specification and research framing
+- `ChainAttest_Protocol_and_Interface_Spec.md`
+  Builder-facing protocol, interface, and package format specification
+- `contracts/`
+  Solidity contracts, generated Groth16 verifiers, and Hardhat test suite
+- `circuits/`
+  Circom circuits, proving artifacts, and verifier exports
+- `cli/`
+  Python CLI scaffold
+- `coordinator/`
+  Coordinator service scaffold
+- `committee/`
+  Committee signer service scaffold
+- `schemas/`
+  JSON schemas for attestation and evaluation claim payloads
 
-- committee signature verification and typed relay package decoding are implemented
-- semantic and eval proof paths are wired to real generated Groth16 verifier contracts
-- end-to-end Hardhat tests cover valid relay flows, replay rejection, public input mismatch rejection, and invalid proof rejection
+## Current Implementation Status
+
+The repository currently includes:
+
+- committee-backed source record authentication
+- semantic attestation verification with generated Groth16 verifier contracts
+- evaluation threshold verification with generated Groth16 verifier contracts
+- evaluator EIP-712 attestations for evaluation claims
+- end-to-end relay tests covering valid flows, replay rejection, signature failures, public input mismatches, and invalid proofs
+
+## Architecture Summary
+
+For attestation verification:
+
+1. A source-side record is committed by a registry.
+2. A committee signs the source record hash after the configured finality delay.
+3. A relay package carries the typed record plus a semantic proof.
+4. The destination verifier checks source authenticity, package/proof consistency, and the semantic proof.
+
+For evaluation claim verification:
+
+1. A verified attestation acts as the parent identity.
+2. An evaluator signs a typed evaluation statement.
+3. A relay package carries structured transcript metadata, an evaluation proof, and committee approvals.
+4. The destination verifier checks committee approval, evaluator authorization, transcript commitment consistency, and the evaluation proof.
 
 ## Quick Start
 
@@ -47,9 +79,9 @@ benchmarks/   Benchmark-related workspace
 docs/         Supplemental docs
 ```
 
-## Next Steps
+## Near-Term Priorities
 
 1. Implement persistent source-chain model registry behavior in `ModelRegistry.sol`.
-2. Add transcript-structure or evaluator-attestation semantics to the eval proof model.
-3. Build witness-generation helpers and packaging scripts for `sem-v1` and `eval-v1`.
-4. Add deployment scripts and CI for the contracts and circuit toolchain.
+2. Expand structured transcript commitments and evaluator policy semantics.
+3. Add witness-generation helpers and packaging scripts for `sem-v1` and `eval-v1`.
+4. Add deployment automation and CI for the contract and circuit toolchains.
