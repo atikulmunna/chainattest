@@ -59,7 +59,9 @@ library ChainAttestTypes {
         bytes32 evalTranscriptDigest;
         uint256 scoreCommitment;
         uint32 thresholdBps;
+        address evaluator;
         bytes32 evaluatorKeyId;
+        bytes evaluatorSignature;
         uint256 claimedAtBlock;
         bytes32 adapterId;
         uint256 finalityDelayBlocks;
@@ -73,4 +75,3 @@ library ChainAttestTypes {
         return uint256(value) % BN254_FIELD_MODULUS;
     }
 }
-
