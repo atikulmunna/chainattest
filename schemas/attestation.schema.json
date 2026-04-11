@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chainattest.local/schemas/attestation.schema.json",
+  "title": "AttestationRecord",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_chain_id",
+    "registry_address",
+    "attestation_id",
+    "model",
+    "training",
+    "ownership",
+    "timestamps"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "source_chain_id": {
+      "type": "integer"
+    },
+    "registry_address": {
+      "type": "string"
+    },
+    "attestation_id": {
+      "type": "integer"
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "model_file_digest",
+        "weights_root",
+        "framework",
+        "framework_version",
+        "architecture_label",
+        "parameter_count"
+      ],
+      "properties": {
+        "model_file_digest": { "type": "string" },
+        "weights_root": { "type": "string" },
+        "framework": { "type": "string" },
+        "framework_version": { "type": "string" },
+        "architecture_label": { "type": "string" },
+        "parameter_count": { "type": "integer" }
+      }
+    },
+    "training": {
+      "type": "object",
+      "required": [
+        "dataset_commitment",
+        "training_commitment",
+        "metadata_digest"
+      ],
+      "properties": {
+        "dataset_commitment": { "type": "string" },
+        "training_commitment": { "type": "string" },
+        "metadata_digest": { "type": "string" }
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "required": [
+        "owner_address",
+        "parent_attestation_id"
+      ],
+      "properties": {
+        "owner_address": { "type": "string" },
+        "parent_attestation_id": { "type": "integer" }
+      }
+    },
+    "timestamps": {
+      "type": "object",
+      "required": [
+        "registered_at_block",
+        "registered_at_unix"
+      ],
+      "properties": {
+        "registered_at_block": { "type": "integer" },
+        "registered_at_unix": { "type": "integer" }
+      }
+    }
+  }
+}
+
