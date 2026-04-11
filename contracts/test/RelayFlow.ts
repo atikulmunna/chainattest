@@ -75,7 +75,9 @@ function evalPackageType() {
     bytes32 evalTranscriptDigest,
     uint256 scoreCommitment,
     uint32 thresholdBps,
+    address evaluator,
     bytes32 evaluatorKeyId,
+    bytes evaluatorSignature,
     uint256 claimedAtBlock,
     bytes32 adapterId,
     uint256 finalityDelayBlocks,
@@ -84,6 +86,10 @@ function evalPackageType() {
     tuple(uint256[2] pA, uint256[2][2] pB, uint256[2] pC) proof,
     uint256[6] publicSignals
   )`;
+}
+
+function evaluatorKeyId(address: string): string {
+  return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address"], [address]));
 }
 
 async function signApproval(adapter: any, signer: any, pkg: any, recordHash: string) {
@@ -121,6 +127,45 @@ async function signApproval(adapter: any, signer: any, pkg: any, recordHash: str
   return signer.signTypedData(domain, types, value);
 }
 
+async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any) {
+  const chainId = (await ethers.provider.getNetwork()).chainId;
+  const domain = {
+    name: "ChainAttestEvaluatorStatement",
+    version: "1",
+    chainId,
+    verifyingContract: await evalVerifier.getAddress()
+  };
+  const types = {
+    EvalClaimAttestation: [
+      { name: "sourceChainId", type: "uint256" },
+      { name: "sourceRegistry", type: "address" },
+      { name: "attestationId", type: "uint256" },
+      { name: "benchmarkDigest", type: "bytes32" },
+      { name: "evalTranscriptDigest", type: "bytes32" },
+      { name: "scoreCommitment", type: "uint256" },
+      { name: "thresholdBps", type: "uint32" },
+      { name: "evaluator", type: "address" },
+      { name: "evaluatorKeyId", type: "bytes32" },
+      { name: "claimedAtBlock", type: "uint256" },
+      { name: "evalCircuitVersion", type: "uint32" }
+    ]
+  };
+  const value = {
+    sourceChainId: pkg.sourceChainId,
+    sourceRegistry: pkg.sourceRegistry,
+    attestationId: pkg.attestationId,
+    benchmarkDigest: pkg.benchmarkDigest,
+    evalTranscriptDigest: pkg.evalTranscriptDigest,
+    scoreCommitment: pkg.scoreCommitment,
+    thresholdBps: pkg.thresholdBps,
+    evaluator: pkg.evaluator,
+    evaluatorKeyId: pkg.evaluatorKeyId,
+    claimedAtBlock: pkg.claimedAtBlock,
+    evalCircuitVersion: pkg.evalCircuitVersion
+  };
+  return signer.signTypedData(domain, types, value);
+}
+
 describe("RelayFlow", function () {
   async function deployFixture() {
     const [deployer, signer1, signer2, signer3] = await ethers.getSigners();
@@ -149,7 +194,8 @@ describe("RelayFlow", function () {
     const evalVerifier = await EvalVerifier.deploy(
       await adapter.getAddress(),
       await semanticVerifier.getAddress(),
-      await evalGroth16.getAddress()
+      await evalGroth16.getAddress(),
+      [signer3.address]
     );
     await evalVerifier.waitForDeployment();
 
@@ -213,12 +259,16 @@ describe("RelayFlow", function () {
     return pkg;
   }
 
-  async function buildSignedEvalPackage(fixture: any, overrides: Record<string, any> = {}) {
-    const { adapter, adapterId, deployer, signer1, signer2 } = fixture;
+  async function buildSignedEvalPackage(
+    fixture: any,
+    options: { packageOverrides?: Record<string, any>; evaluatorSigner?: any } = {}
+  ) {
+    const { adapter, adapterId, deployer, signer1, signer2, signer3, evalVerifier } = fixture;
     const evalProof = normalizeProof(readJson("eval_proof.json"));
     const evalSignals = normalizeSignals(readJson("eval_public.json"));
     const benchmarkDigest = ethers.keccak256(ethers.toUtf8Bytes("benchmark"));
     const evalTranscriptDigest = ethers.keccak256(ethers.toUtf8Bytes("transcript"));
+    const evaluatorSigner = options.evaluatorSigner ?? signer3;
     const pkg: any = {
       packageVersion: 1,
       packageType: 2,
@@ -231,7 +281,9 @@ describe("RelayFlow", function () {
       evalTranscriptDigest,
       scoreCommitment: evalSignals[3],
       thresholdBps: Number(evalSignals[4]),
-      evaluatorKeyId: ethers.keccak256(ethers.toUtf8Bytes("evaluator")),
+      evaluator: await evaluatorSigner.getAddress(),
+      evaluatorKeyId: evaluatorKeyId(await evaluatorSigner.getAddress()),
+      evaluatorSignature: "0x",
       claimedAtBlock: 12350n,
       adapterId,
       finalityDelayBlocks: 12n,
@@ -239,8 +291,10 @@ describe("RelayFlow", function () {
       evalCircuitVersion: Number(evalSignals[5]),
       proof: evalProof,
       publicSignals: evalSignals,
-      ...overrides
+      ...(options.packageOverrides ?? {})
     };
+
+    pkg.evaluatorSignature = await signEvaluatorAttestation(evalVerifier, evaluatorSigner, pkg);
 
     const recordHash = await adapter.computeEvalRecordHash(pkg);
     pkg.signatures = [
@@ -326,6 +380,37 @@ describe("RelayFlow", function () {
     await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.emit(
       fixture.evalVerifier,
       "EvalClaimPackageVerified"
+    );
+  });
+
+  it("rejects eval packages signed by an unauthorized evaluator", async function () {
+    const fixture = await deployFixture();
+    const attPkg = await buildSignedAttestationPackage(fixture);
+    const attEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attPkg]);
+    await fixture.semanticVerifier.verifyAttestationPackage(attEncoded);
+
+    const evalPkg = await buildSignedEvalPackage(fixture, { evaluatorSigner: fixture.deployer });
+    const evalEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalPkg]);
+
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "UnauthorizedEvaluator"
+    );
+  });
+
+  it("rejects eval packages with mismatched evaluator signatures", async function () {
+    const fixture = await deployFixture();
+    const attPkg = await buildSignedAttestationPackage(fixture);
+    const attEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attPkg]);
+    await fixture.semanticVerifier.verifyAttestationPackage(attEncoded);
+
+    const evalPkg = await buildSignedEvalPackage(fixture);
+    evalPkg.evaluatorSignature = await signEvaluatorAttestation(fixture.evalVerifier, fixture.signer1, evalPkg);
+    const evalEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalPkg]);
+
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "InvalidEvaluatorSignature"
     );
   });
 

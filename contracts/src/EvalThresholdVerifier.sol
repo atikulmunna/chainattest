@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+
 import {CommitteeAuthAdapter} from "./adapters/CommitteeAuthAdapter.sol";
 import {ChainAttestTypes} from "./ChainAttestTypes.sol";
 import {SemanticVerifier} from "./SemanticVerifier.sol";
 import {IEvalGroth16Verifier} from "./verifiers/IEvalGroth16Verifier.sol";
 
-contract EvalThresholdVerifier {
+contract EvalThresholdVerifier is EIP712 {
+    using ECDSA for bytes32;
+
     error UnsupportedPackageVersion(uint16 version);
     error InvalidPackageType(uint8 packageType);
     error AdapterVerificationFailed();
@@ -14,6 +19,13 @@ contract EvalThresholdVerifier {
     error InvalidProof();
     error ReplayDetected(bytes32 key);
     error PublicInputMismatch();
+    error UnauthorizedEvaluator(address evaluator);
+    error InvalidEvaluatorSignature(address expected, address recovered);
+    error EvaluatorKeyMismatch(bytes32 expected, bytes32 actual);
+
+    bytes32 public constant EVAL_CLAIM_ATTESTATION_TYPEHASH = keccak256(
+        "EvalClaimAttestation(uint256 sourceChainId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
+    );
 
     struct VerifiedEvalClaim {
         uint256 attestationId;
@@ -23,6 +35,7 @@ contract EvalThresholdVerifier {
         bytes32 evalTranscriptDigest;
         uint256 scoreCommitment;
         uint32 thresholdBps;
+        address evaluator;
         bytes32 adapterId;
         uint32 evalCircuitVersion;
         bool revoked;
@@ -41,12 +54,24 @@ contract EvalThresholdVerifier {
     CommitteeAuthAdapter public immutable adapter;
     SemanticVerifier public immutable semanticVerifier;
     IEvalGroth16Verifier public immutable groth16Verifier;
+    mapping(address => bool) public isAuthorizedEvaluator;
     mapping(bytes32 => VerifiedEvalClaim) public verifiedEvalClaims;
 
-    constructor(address adapterAddress, address semanticVerifierAddress, address groth16VerifierAddress) {
+    constructor(
+        address adapterAddress,
+        address semanticVerifierAddress,
+        address groth16VerifierAddress,
+        address[] memory authorizedEvaluators
+    ) EIP712("ChainAttestEvaluatorStatement", "1") {
         adapter = CommitteeAuthAdapter(adapterAddress);
         semanticVerifier = SemanticVerifier(semanticVerifierAddress);
         groth16Verifier = IEvalGroth16Verifier(groth16VerifierAddress);
+
+        for (uint256 i = 0; i < authorizedEvaluators.length; i++) {
+            address evaluator = authorizedEvaluators[i];
+            require(evaluator != address(0), "zero evaluator");
+            isAuthorizedEvaluator[evaluator] = true;
+        }
     }
 
     function verifyEvalClaimPackage(bytes calldata packageData) external {
@@ -68,6 +93,8 @@ contract EvalThresholdVerifier {
         if (!ok) revert AdapterVerificationFailed();
         sourceRecordHash;
         sourceBlockNumber;
+
+        _verifyEvaluatorAttestation(pkg);
 
         if (
             pkg.publicSignals[0] != pkg.attestationId ||
@@ -99,6 +126,7 @@ contract EvalThresholdVerifier {
             evalTranscriptDigest: pkg.evalTranscriptDigest,
             scoreCommitment: pkg.scoreCommitment,
             thresholdBps: pkg.thresholdBps,
+            evaluator: pkg.evaluator,
             adapterId: adapterId,
             evalCircuitVersion: pkg.evalCircuitVersion,
             revoked: false,
@@ -113,5 +141,53 @@ contract EvalThresholdVerifier {
             adapterId,
             pkg.evalCircuitVersion
         );
+    }
+
+    function computeEvaluatorAttestationDigest(ChainAttestTypes.EvalRelayPackage calldata pkg)
+        external
+        view
+        returns (bytes32)
+    {
+        return _evaluatorAttestationDigest(pkg);
+    }
+
+    function _verifyEvaluatorAttestation(ChainAttestTypes.EvalRelayPackage memory pkg) internal view {
+        if (!isAuthorizedEvaluator[pkg.evaluator]) {
+            revert UnauthorizedEvaluator(pkg.evaluator);
+        }
+
+        bytes32 expectedKeyId = keccak256(abi.encode(pkg.evaluator));
+        if (pkg.evaluatorKeyId != expectedKeyId) {
+            revert EvaluatorKeyMismatch(expectedKeyId, pkg.evaluatorKeyId);
+        }
+
+        address recovered = ECDSA.recover(_evaluatorAttestationDigest(pkg), pkg.evaluatorSignature);
+        if (recovered != pkg.evaluator) {
+            revert InvalidEvaluatorSignature(pkg.evaluator, recovered);
+        }
+    }
+
+    function _evaluatorAttestationDigest(ChainAttestTypes.EvalRelayPackage memory pkg)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                EVAL_CLAIM_ATTESTATION_TYPEHASH,
+                pkg.sourceChainId,
+                pkg.sourceRegistry,
+                pkg.attestationId,
+                pkg.benchmarkDigest,
+                pkg.evalTranscriptDigest,
+                pkg.scoreCommitment,
+                pkg.thresholdBps,
+                pkg.evaluator,
+                pkg.evaluatorKeyId,
+                pkg.claimedAtBlock,
+                pkg.evalCircuitVersion
+            )
+        );
+        return _hashTypedDataV4(structHash);
     }
 }
