@@ -39,6 +39,7 @@ The repository currently includes:
 - semantic attestation verification with generated Groth16 verifier contracts
 - evaluation threshold verification with generated Groth16 verifier contracts
 - evaluator EIP-712 attestations for evaluation claims
+- structured transcript commitments and evaluator policy metadata checks for eval claims
 - end-to-end relay tests covering valid flows, replay rejection, signature failures, public input mismatches, and invalid proofs
 
 ## Architecture Summary
@@ -82,6 +83,6 @@ docs/         Supplemental docs
 ## Near-Term Priorities
 
 1. Implement persistent source-chain model registry behavior in `ModelRegistry.sol`.
-2. Expand structured transcript commitments and evaluator policy semantics.
+2. Add richer transcript summaries beyond metadata-only transcript commitments.
 3. Add witness-generation helpers and packaging scripts for `sem-v1` and `eval-v1`.
 4. Add deployment automation and CI for the contract and circuit toolchains.
