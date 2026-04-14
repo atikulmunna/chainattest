@@ -232,6 +232,7 @@ Requirements:
 - `transcriptSampleCount > 0`
 - `transcriptVersion` identifies the schema version for the transcript summary
 - the evaluator statement must cover the same transcript fields
+- eval packages must also carry `evaluatorPolicyDigest` and `evaluatorPolicyVersion` so the evaluator attests to a concrete scoring policy
 
 ---
 
@@ -842,6 +843,8 @@ struct EvalRelayPackage {
     uint32 thresholdBps;
     address evaluator;
     bytes32 evaluatorKeyId;
+    bytes32 evaluatorPolicyDigest;
+    uint32 evaluatorPolicyVersion;
     bytes evaluatorSignature;
     uint256 claimedAtBlock;
     bytes32 adapterId;
