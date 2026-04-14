@@ -82,6 +82,8 @@ function evalPackageType() {
     uint32 thresholdBps,
     address evaluator,
     bytes32 evaluatorKeyId,
+    bytes32 evaluatorPolicyDigest,
+    uint32 evaluatorPolicyVersion,
     bytes evaluatorSignature,
     uint256 claimedAtBlock,
     bytes32 adapterId,
@@ -181,6 +183,8 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
       { name: "thresholdBps", type: "uint32" },
       { name: "evaluator", type: "address" },
       { name: "evaluatorKeyId", type: "bytes32" },
+      { name: "evaluatorPolicyDigest", type: "bytes32" },
+      { name: "evaluatorPolicyVersion", type: "uint32" },
       { name: "claimedAtBlock", type: "uint256" },
       { name: "evalCircuitVersion", type: "uint32" }
     ]
@@ -200,6 +204,8 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
     thresholdBps: pkg.thresholdBps,
     evaluator: pkg.evaluator,
     evaluatorKeyId: pkg.evaluatorKeyId,
+    evaluatorPolicyDigest: pkg.evaluatorPolicyDigest,
+    evaluatorPolicyVersion: pkg.evaluatorPolicyVersion,
     claimedAtBlock: pkg.claimedAtBlock,
     evalCircuitVersion: pkg.evalCircuitVersion
   };
@@ -341,6 +347,8 @@ describe("RelayFlow", function () {
       thresholdBps: Number(evalSignals[4]),
       evaluator: await evaluatorSigner.getAddress(),
       evaluatorKeyId: evaluatorKeyId(await evaluatorSigner.getAddress()),
+      evaluatorPolicyDigest: ethers.keccak256(ethers.toUtf8Bytes("policy:top1-accuracy-v1")),
+      evaluatorPolicyVersion: 1,
       evaluatorSignature: "0x",
       claimedAtBlock: 12350n,
       adapterId,
@@ -472,6 +480,25 @@ describe("RelayFlow", function () {
     await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.be.revertedWithCustomError(
       fixture.evalVerifier,
       "UnauthorizedEvaluator"
+    );
+  });
+
+  it("rejects eval packages with invalid evaluator policy metadata", async function () {
+    const fixture = await deployFixture();
+    const attPkg = await buildSignedAttestationPackage(fixture);
+    const attEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attPkg]);
+    await fixture.semanticVerifier.verifyAttestationPackage(attEncoded);
+
+    const evalPkg = await buildSignedEvalPackage(fixture, {
+      packageOverrides: {
+        evaluatorPolicyVersion: 0
+      }
+    });
+    const evalEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalPkg]);
+
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "InvalidEvaluatorPolicyVersion"
     );
   });
 

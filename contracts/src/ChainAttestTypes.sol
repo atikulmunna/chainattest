@@ -66,6 +66,8 @@ library ChainAttestTypes {
         uint32 thresholdBps;
         address evaluator;
         bytes32 evaluatorKeyId;
+        bytes32 evaluatorPolicyDigest;
+        uint32 evaluatorPolicyVersion;
         bytes evaluatorSignature;
         uint256 claimedAtBlock;
         bytes32 adapterId;
