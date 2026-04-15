@@ -2,6 +2,31 @@
 pragma solidity ^0.8.24;
 
 contract ModelRegistry {
+    error ModelDigestRequired();
+    error WeightsRootRequired();
+    error MetadataDigestRequired();
+    error ParentAttestationMissing(uint256 parentAttestationId);
+    error ParentAttestationRevoked(uint256 parentAttestationId);
+    error AttestationMissing(uint256 attestationId);
+    error AttestationIsRevoked(uint256 attestationId);
+    error NotAttestationOwner(address expectedOwner, address actualSender);
+    error BenchmarkDigestRequired();
+    error TranscriptDigestRequired();
+    error ScoreCommitmentRequired();
+    error InvalidThresholdBps(uint32 thresholdBps);
+    error EvaluatorRequired();
+    error EvaluatorKeyIdRequired();
+    error DatasetSplitDigestRequired();
+    error InferenceConfigDigestRequired();
+    error RandomnessSeedDigestRequired();
+    error InvalidTranscriptSampleCount(uint32 transcriptSampleCount);
+    error InvalidTranscriptVersion(uint32 transcriptVersion);
+    error EvaluatorPolicyDigestRequired();
+    error InvalidEvaluatorPolicyVersion(uint32 evaluatorPolicyVersion);
+    error EvalClaimAlreadyExists(uint256 attestationId, bytes32 benchmarkDigest);
+    error AlreadyRevoked();
+    error EvalClaimMissing(uint256 attestationId, bytes32 benchmarkDigest);
+
     struct AttestationRecord {
         uint256 attestationId;
         bytes32 modelFileDigest;
@@ -20,10 +45,19 @@ contract ModelRegistry {
         uint256 attestationId;
         bytes32 benchmarkDigest;
         bytes32 evalTranscriptDigest;
+        bytes32 datasetSplitDigest;
+        bytes32 inferenceConfigDigest;
+        bytes32 randomnessSeedDigest;
+        uint32 transcriptSampleCount;
+        uint32 transcriptVersion;
         uint256 scoreCommitment;
         uint32 thresholdBps;
+        address evaluator;
         bytes32 evaluatorKeyId;
+        bytes32 evaluatorPolicyDigest;
+        uint32 evaluatorPolicyVersion;
         uint64 claimedAtBlock;
+        uint64 claimedAtTime;
         bool revoked;
     }
 
@@ -40,7 +74,10 @@ contract ModelRegistry {
         bytes32 indexed benchmarkDigest,
         bytes32 evalTranscriptDigest,
         uint256 scoreCommitment,
-        uint32 thresholdBps
+        uint32 thresholdBps,
+        address evaluator,
+        bytes32 evaluatorPolicyDigest,
+        uint32 evaluatorPolicyVersion
     );
 
     event AttestationRevoked(uint256 indexed attestationId, address indexed actor);
@@ -48,6 +85,10 @@ contract ModelRegistry {
 
     mapping(uint256 => AttestationRecord) public attestations;
     mapping(uint256 => mapping(bytes32 => EvalClaimRecord)) public evalClaims;
+    mapping(address => uint256[]) private ownerAttestationIds;
+    mapping(uint256 => uint256[]) private childAttestationIds;
+    mapping(uint256 => bytes32[]) private evalClaimBenchmarkDigests;
+    mapping(uint256 => mapping(bytes32 => bool)) private hasEvalClaimBenchmark;
 
     uint256 public nextAttestationId = 1;
 
@@ -59,11 +100,13 @@ contract ModelRegistry {
         bytes32 metadataDigest,
         uint256 parentAttestationId
     ) external returns (uint256 attestationId) {
-        require(modelFileDigest != bytes32(0), "model digest required");
-        require(weightsRoot != 0, "weights root required");
-        require(metadataDigest != bytes32(0), "metadata digest required");
+        if (modelFileDigest == bytes32(0)) revert ModelDigestRequired();
+        if (weightsRoot == 0) revert WeightsRootRequired();
+        if (metadataDigest == bytes32(0)) revert MetadataDigestRequired();
         if (parentAttestationId != 0) {
-            require(attestations[parentAttestationId].attestationId != 0, "parent missing");
+            AttestationRecord storage parent = attestations[parentAttestationId];
+            if (parent.attestationId == 0) revert ParentAttestationMissing(parentAttestationId);
+            if (parent.revoked) revert ParentAttestationRevoked(parentAttestationId);
         }
 
         attestationId = nextAttestationId++;
@@ -80,6 +123,10 @@ contract ModelRegistry {
             registeredAtTime: uint64(block.timestamp),
             revoked: false
         });
+        ownerAttestationIds[msg.sender].push(attestationId);
+        if (parentAttestationId != 0) {
+            childAttestationIds[parentAttestationId].push(attestationId);
+        }
 
         emit AttestationRegistered(attestationId, msg.sender, modelFileDigest, weightsRoot, metadataDigest);
     }
@@ -88,44 +135,80 @@ contract ModelRegistry {
         uint256 attestationId,
         bytes32 benchmarkDigest,
         bytes32 evalTranscriptDigest,
+        bytes32 datasetSplitDigest,
+        bytes32 inferenceConfigDigest,
+        bytes32 randomnessSeedDigest,
+        uint32 transcriptSampleCount,
+        uint32 transcriptVersion,
         uint256 scoreCommitment,
         uint32 thresholdBps,
-        bytes32 evaluatorKeyId
+        address evaluator,
+        bytes32 evaluatorKeyId,
+        bytes32 evaluatorPolicyDigest,
+        uint32 evaluatorPolicyVersion
     ) external {
         AttestationRecord storage attestation = attestations[attestationId];
-        require(attestation.attestationId != 0, "attestation missing");
-        require(!attestation.revoked, "attestation revoked");
-        require(attestation.owner == msg.sender, "not owner");
-        require(benchmarkDigest != bytes32(0), "benchmark digest required");
-        require(evalTranscriptDigest != bytes32(0), "transcript digest required");
-        require(scoreCommitment != 0, "score commitment required");
-        require(thresholdBps <= 10_000, "invalid threshold");
+        if (attestation.attestationId == 0) revert AttestationMissing(attestationId);
+        if (attestation.revoked) revert AttestationIsRevoked(attestationId);
+        if (attestation.owner != msg.sender) revert NotAttestationOwner(attestation.owner, msg.sender);
+        if (benchmarkDigest == bytes32(0)) revert BenchmarkDigestRequired();
+        if (evalTranscriptDigest == bytes32(0)) revert TranscriptDigestRequired();
+        if (datasetSplitDigest == bytes32(0)) revert DatasetSplitDigestRequired();
+        if (inferenceConfigDigest == bytes32(0)) revert InferenceConfigDigestRequired();
+        if (randomnessSeedDigest == bytes32(0)) revert RandomnessSeedDigestRequired();
+        if (transcriptSampleCount == 0) revert InvalidTranscriptSampleCount(transcriptSampleCount);
+        if (transcriptVersion == 0) revert InvalidTranscriptVersion(transcriptVersion);
+        if (scoreCommitment == 0) revert ScoreCommitmentRequired();
+        if (thresholdBps > 10_000) revert InvalidThresholdBps(thresholdBps);
+        if (evaluator == address(0)) revert EvaluatorRequired();
+        if (evaluatorKeyId == bytes32(0)) revert EvaluatorKeyIdRequired();
+        if (evaluatorPolicyDigest == bytes32(0)) revert EvaluatorPolicyDigestRequired();
+        if (evaluatorPolicyVersion == 0) revert InvalidEvaluatorPolicyVersion(evaluatorPolicyVersion);
+        if (evalClaims[attestationId][benchmarkDigest].attestationId != 0) {
+            revert EvalClaimAlreadyExists(attestationId, benchmarkDigest);
+        }
 
         evalClaims[attestationId][benchmarkDigest] = EvalClaimRecord({
             attestationId: attestationId,
             benchmarkDigest: benchmarkDigest,
             evalTranscriptDigest: evalTranscriptDigest,
+            datasetSplitDigest: datasetSplitDigest,
+            inferenceConfigDigest: inferenceConfigDigest,
+            randomnessSeedDigest: randomnessSeedDigest,
+            transcriptSampleCount: transcriptSampleCount,
+            transcriptVersion: transcriptVersion,
             scoreCommitment: scoreCommitment,
             thresholdBps: thresholdBps,
+            evaluator: evaluator,
             evaluatorKeyId: evaluatorKeyId,
+            evaluatorPolicyDigest: evaluatorPolicyDigest,
+            evaluatorPolicyVersion: evaluatorPolicyVersion,
             claimedAtBlock: uint64(block.number),
+            claimedAtTime: uint64(block.timestamp),
             revoked: false
         });
+        if (!hasEvalClaimBenchmark[attestationId][benchmarkDigest]) {
+            hasEvalClaimBenchmark[attestationId][benchmarkDigest] = true;
+            evalClaimBenchmarkDigests[attestationId].push(benchmarkDigest);
+        }
 
         emit EvalClaimRegistered(
             attestationId,
             benchmarkDigest,
             evalTranscriptDigest,
             scoreCommitment,
-            thresholdBps
+            thresholdBps,
+            evaluator,
+            evaluatorPolicyDigest,
+            evaluatorPolicyVersion
         );
     }
 
     function revokeAttestation(uint256 attestationId) external {
         AttestationRecord storage attestation = attestations[attestationId];
-        require(attestation.attestationId != 0, "attestation missing");
-        require(attestation.owner == msg.sender, "not owner");
-        require(!attestation.revoked, "already revoked");
+        if (attestation.attestationId == 0) revert AttestationMissing(attestationId);
+        if (attestation.owner != msg.sender) revert NotAttestationOwner(attestation.owner, msg.sender);
+        if (attestation.revoked) revert AlreadyRevoked();
 
         attestation.revoked = true;
         emit AttestationRevoked(attestationId, msg.sender);
@@ -134,10 +217,10 @@ contract ModelRegistry {
     function revokeEvalClaim(uint256 attestationId, bytes32 benchmarkDigest) external {
         AttestationRecord storage attestation = attestations[attestationId];
         EvalClaimRecord storage claim = evalClaims[attestationId][benchmarkDigest];
-        require(attestation.attestationId != 0, "attestation missing");
-        require(attestation.owner == msg.sender, "not owner");
-        require(claim.attestationId != 0, "claim missing");
-        require(!claim.revoked, "already revoked");
+        if (attestation.attestationId == 0) revert AttestationMissing(attestationId);
+        if (attestation.owner != msg.sender) revert NotAttestationOwner(attestation.owner, msg.sender);
+        if (claim.attestationId == 0) revert EvalClaimMissing(attestationId, benchmarkDigest);
+        if (claim.revoked) revert AlreadyRevoked();
 
         claim.revoked = true;
         emit EvalClaimRevoked(attestationId, benchmarkDigest, msg.sender);
@@ -154,5 +237,26 @@ contract ModelRegistry {
     {
         return evalClaims[attestationId][benchmarkDigest];
     }
-}
 
+    function getOwnerAttestationIds(address owner) external view returns (uint256[] memory) {
+        return ownerAttestationIds[owner];
+    }
+
+    function getChildAttestationIds(uint256 attestationId) external view returns (uint256[] memory) {
+        return childAttestationIds[attestationId];
+    }
+
+    function getEvalClaimBenchmarkDigests(uint256 attestationId) external view returns (bytes32[] memory) {
+        return evalClaimBenchmarkDigests[attestationId];
+    }
+
+    function isAttestationActive(uint256 attestationId) public view returns (bool) {
+        AttestationRecord memory attestation = attestations[attestationId];
+        return attestation.attestationId != 0 && !attestation.revoked;
+    }
+
+    function isEvalClaimActive(uint256 attestationId, bytes32 benchmarkDigest) external view returns (bool) {
+        EvalClaimRecord memory claim = evalClaims[attestationId][benchmarkDigest];
+        return claim.attestationId != 0 && !claim.revoked && isAttestationActive(attestationId);
+    }
+}
