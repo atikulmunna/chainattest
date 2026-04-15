@@ -260,10 +260,19 @@ interface IModelRegistry {
         uint256 attestationId;
         bytes32 benchmarkDigest;
         bytes32 evalTranscriptDigest;
+        bytes32 datasetSplitDigest;
+        bytes32 inferenceConfigDigest;
+        bytes32 randomnessSeedDigest;
+        uint32 transcriptSampleCount;
+        uint32 transcriptVersion;
         uint256 scoreCommitment;
         uint32 thresholdBps;
+        address evaluator;
         bytes32 evaluatorKeyId;
+        bytes32 evaluatorPolicyDigest;
+        uint32 evaluatorPolicyVersion;
         uint64 claimedAtBlock;
+        uint64 claimedAtTime;
         bool revoked;
     }
 
@@ -280,7 +289,10 @@ interface IModelRegistry {
         bytes32 indexed benchmarkDigest,
         bytes32 evalTranscriptDigest,
         uint256 scoreCommitment,
-        uint32 thresholdBps
+        uint32 thresholdBps,
+        address evaluator,
+        bytes32 evaluatorPolicyDigest,
+        uint32 evaluatorPolicyVersion
     );
 
     event AttestationRevoked(uint256 indexed attestationId, address indexed actor);
@@ -299,9 +311,17 @@ interface IModelRegistry {
         uint256 attestationId,
         bytes32 benchmarkDigest,
         bytes32 evalTranscriptDigest,
+        bytes32 datasetSplitDigest,
+        bytes32 inferenceConfigDigest,
+        bytes32 randomnessSeedDigest,
+        uint32 transcriptSampleCount,
+        uint32 transcriptVersion,
         uint256 scoreCommitment,
         uint32 thresholdBps,
-        bytes32 evaluatorKeyId
+        address evaluator,
+        bytes32 evaluatorKeyId,
+        bytes32 evaluatorPolicyDigest,
+        uint32 evaluatorPolicyVersion
     ) external;
 
     function revokeAttestation(uint256 attestationId) external;
@@ -317,6 +337,31 @@ interface IModelRegistry {
         external
         view
         returns (EvalClaimRecord memory);
+
+    function getOwnerAttestationIds(address owner)
+        external
+        view
+        returns (uint256[] memory);
+
+    function getChildAttestationIds(uint256 attestationId)
+        external
+        view
+        returns (uint256[] memory);
+
+    function getEvalClaimBenchmarkDigests(uint256 attestationId)
+        external
+        view
+        returns (bytes32[] memory);
+
+    function isAttestationActive(uint256 attestationId)
+        external
+        view
+        returns (bool);
+
+    function isEvalClaimActive(uint256 attestationId, bytes32 benchmarkDigest)
+        external
+        view
+        returns (bool);
 }
 ```
 
@@ -335,8 +380,18 @@ interface IModelRegistry {
 - referenced attestation is revoked
 - `benchmarkDigest == 0`
 - `evalTranscriptDigest == 0`
+- `datasetSplitDigest == 0`
+- `inferenceConfigDigest == 0`
+- `randomnessSeedDigest == 0`
+- `transcriptSampleCount == 0`
+- `transcriptVersion == 0`
 - `scoreCommitment == 0`
 - `thresholdBps > 10000`
+- `evaluator == 0`
+- `evaluatorKeyId == 0`
+- `evaluatorPolicyDigest == 0`
+- `evaluatorPolicyVersion == 0`
+- an eval claim already exists for the same `(attestationId, benchmarkDigest)` pair
 
 ### 5.3 Source Storage Keys
 
@@ -345,6 +400,9 @@ Recommended mappings:
 ```solidity
 mapping(uint256 => AttestationRecord) public attestations;
 mapping(uint256 => mapping(bytes32 => EvalClaimRecord)) public evalClaims;
+mapping(address => uint256[]) private ownerAttestationIds;
+mapping(uint256 => uint256[]) private childAttestationIds;
+mapping(uint256 => bytes32[]) private evalClaimBenchmarkDigests;
 ```
 
 ---

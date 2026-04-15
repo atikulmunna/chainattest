@@ -35,6 +35,7 @@ The system is designed for cases where the payload is not an asset transfer, but
 
 The repository currently includes:
 
+- a source-side model registry with lineage, ownership lookup, structured eval claim storage, and revocation-aware activity checks
 - committee-backed source record authentication
 - semantic attestation verification with generated Groth16 verifier contracts
 - evaluation threshold verification with generated Groth16 verifier contracts
@@ -82,7 +83,7 @@ docs/         Supplemental docs
 
 ## Near-Term Priorities
 
-1. Implement persistent source-chain model registry behavior in `ModelRegistry.sol`.
-2. Add richer transcript summaries beyond metadata-only transcript commitments.
-3. Add witness-generation helpers and packaging scripts for `sem-v1` and `eval-v1`.
-4. Add deployment automation and CI for the contract and circuit toolchains.
+1. Add richer transcript summaries beyond metadata-only transcript commitments.
+2. Extend the CLI/coordinator path into full witness generation and signed package orchestration.
+3. Add deployment automation and CI for the contract and circuit toolchains.
+4. Add source-to-destination integration scripts that connect the registry, CLI, and verifier contracts.
