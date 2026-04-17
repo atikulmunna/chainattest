@@ -1122,15 +1122,20 @@ The current coordinator is an in-process Python service, not an HTTP server. It 
 
 1. write `attestation_manifest.json`
 2. write `semantic_input.json`
-3. write `attestation_package.json`
-4. record job state transitions around the bundle-preparation run
+3. generate Groth16 proof and public signals unless provided explicitly
+4. collect committee approval signatures when signer material and verifier-domain metadata are configured
+5. write `attestation_package.json`
+6. record job state transitions around the bundle-preparation run
 
 `prepare_eval_bundle(request)` must:
 
 1. write `eval_claim_manifest.json`
 2. write `eval_input.json`
-3. write `eval_package.json`
-4. record job state transitions around the bundle-preparation run
+3. generate Groth16 proof and public signals unless provided explicitly
+4. sign the evaluator statement when an evaluator private key and verifier-domain metadata are configured
+5. collect committee approval signatures when signer material and verifier-domain metadata are configured
+6. write `eval_package.json`
+7. record job state transitions around the bundle-preparation run
 
 Both methods currently delegate to the CLI entrypoint and return:
 
@@ -1144,7 +1149,7 @@ The coordinator currently materializes these request types:
 - `AttestationBundleRequest`
 - `EvalBundleRequest`
 
-These carry the same normalized fields required by the CLI layer, including optional proof, public signal, and committee signature file paths.
+These carry the same normalized fields required by the CLI layer, along with optional destination-domain metadata, signer private keys, and proof or signature override paths.
 
 ### 11.5 Current State Model
 
@@ -1154,7 +1159,7 @@ The current reference implementation stores state in memory:
 - `job_order` list preserving submission order
 - aggregate `CoordinatorStatus`
 
-This is sufficient for local orchestration and tests, but not for crash recovery or multi-worker deployment.
+This is sufficient for local orchestration and tests, but not for crash recovery, secure key isolation, or multi-worker deployment.
 
 ### 11.6 Future Service API
 

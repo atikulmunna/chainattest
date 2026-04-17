@@ -25,9 +25,9 @@ The system is designed for cases where the payload is not an asset transfer, but
 - `cli/`
   Python CLI for attestation and eval manifests, witness inputs, and relay package generation
 - `coordinator/`
-  Python coordinator service with in-memory job tracking and bundle preparation helpers
+  Python coordinator service with in-memory job tracking, proof generation, and signature orchestration helpers
 - `committee/`
-  Committee signer service scaffold
+  Local committee signer service for typed approval collection
 - `schemas/`
   JSON schemas for attestation and evaluation claim payloads
 
@@ -42,8 +42,9 @@ The repository currently includes:
 - evaluator EIP-712 attestations for evaluation claims
 - structured transcript commitments and evaluator policy metadata checks for eval claims
 - a working CLI flow for manifest generation, witness preparation, and relay package rendering
-- a coordinator helper that orchestrates CLI-based attestation and eval bundle preparation
+- a coordinator helper that orchestrates CLI-based manifest building, Groth16 proof generation, evaluator signing, and committee approval collection
 - GitHub Actions CI for contract build/test and Python CLI/coordinator checks
+- Python orchestration tests covering generated proofs and signed relay bundles
 - end-to-end relay tests covering valid flows, replay rejection, signature failures, public input mismatches, and invalid proofs
 
 ## Architecture Summary
@@ -77,8 +78,8 @@ npm test
 contracts/    Solidity contracts and contract tests
 circuits/     Circom circuits and proving artifacts
 cli/          Python CLI for manifests, witness inputs, and relay packages
-coordinator/  Python coordinator with job tracking and bundle preparation helpers
-committee/    Committee signer service scaffold
+coordinator/  Python coordinator with proof/signature orchestration helpers
+committee/    Local typed-data committee signer service
 schemas/      JSON schemas for source records
 benchmarks/   Benchmark-related workspace
 docs/         Supplemental docs
@@ -87,6 +88,6 @@ docs/         Supplemental docs
 ## Near-Term Priorities
 
 1. Add richer transcript summaries beyond metadata-only transcript commitments.
-2. Extend the CLI/coordinator path into full proving, signing, and destination-submission orchestration.
+2. Extend the CLI/coordinator path into destination submission and recovery-aware long-running orchestration.
 3. Expand deployment automation and CI coverage for circuit regeneration, proving artifacts, and integration flows.
 4. Add source-to-destination integration scripts that connect the registry, CLI, and verifier contracts.
