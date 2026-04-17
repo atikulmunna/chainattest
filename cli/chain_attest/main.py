@@ -242,6 +242,22 @@ def load_optional_json(path: Path | None) -> Any:
     return load_json(path)
 
 
+def normalize_groth16_proof(proof: Any) -> Any:
+    if proof is None:
+        return None
+    if isinstance(proof, dict) and {"pA", "pB", "pC"}.issubset(proof.keys()):
+        return proof
+    return run_bridge({"action": "normalize_groth16_proof", "proof": proof})["proof"]
+
+
+def normalize_public_signals(values: Any) -> Any:
+    if values is None:
+        return None
+    if not isinstance(values, list):
+        raise typer.BadParameter("public signals must be a JSON array")
+    return [str(value) for value in values]
+
+
 @app.command("render-attestation-package")
 def render_attestation_package(
     manifest: Path = typer.Option(..., help="Attestation manifest JSON"),
@@ -261,8 +277,8 @@ def render_attestation_package(
 ) -> None:
     record = load_json(manifest)
     semantic = load_json(semantic_input)
-    proof = load_optional_json(proof_file)
-    public_signals = load_optional_json(public_signals_file)
+    proof = normalize_groth16_proof(load_optional_json(proof_file))
+    public_signals = normalize_public_signals(load_optional_json(public_signals_file))
     signatures = load_optional_json(signatures_file) or []
 
     package = {
@@ -314,8 +330,8 @@ def render_eval_package(
 ) -> None:
     claim = load_json(manifest)
     eval_witness = load_json(eval_input)
-    proof = load_optional_json(proof_file)
-    public_signals = load_optional_json(public_signals_file)
+    proof = normalize_groth16_proof(load_optional_json(proof_file))
+    public_signals = normalize_public_signals(load_optional_json(public_signals_file))
     signatures = load_optional_json(signatures_file) or []
 
     package = {
