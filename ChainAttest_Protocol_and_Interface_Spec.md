@@ -919,86 +919,163 @@ struct EvalRelayPackage {
 
 ## 10. CLI Command Contract
 
+The current reference implementation exposes local file-oriented helper commands. These commands prepare normalized manifests, witness inputs, and typed relay package JSON. They do not yet submit source-chain or destination-chain transactions directly.
+
 ### 10.1 `register-attestation`
 
 Inputs:
 
-- model path
-- metadata manifest path
-- training manifest path
-- dataset manifest path
-- source RPC
-- source registry address
+- `--model`
+- `--metadata`
+- `--training`
+- `--dataset`
+- `--owner`
+- `--weights-root`
+- `--parent-attestation-id`
+- `--output`
 
 Outputs:
 
-- source tx hash
-- attestation ID
-- all computed commitments
+- attestation manifest JSON containing:
+  - `model_file_digest`
+  - `dataset_commitment`
+  - `training_commitment`
+  - `metadata_digest`
+  - `owner`
+  - `weights_root`
+  - `parent_attestation_id`
 
 Exit behavior:
 
-- non-zero exit if canonicalization fails
-- non-zero exit if source transaction reverts
+- non-zero exit if address normalization fails
+- non-zero exit if any required input file cannot be read
 
-### 10.2 `register-eval-claim`
-
-Inputs:
-
-- attestation ID
-- benchmark manifest path
-- transcript path
-- score commitment
-- threshold bps
-
-Outputs:
-
-- source tx hash
-- normalized evaluation claim summary
-
-### 10.3 `prove-eval-threshold`
+### 10.2 `build-semantic-input`
 
 Inputs:
 
-- attestation ID
-- benchmark digest
-- eval transcript digest
-- exact score
-- threshold bps
-- salt file or generated salt output location
-- circuit artifact paths
+- `--manifest`
+- `--attestation-id`
+- `--registered-at-block`
+- `--path-elements`
+- `--path-indices`
+- `--output`
 
 Outputs:
 
-- score commitment
-- proof artifact paths
-- public signals
+- semantic witness input JSON containing:
+  - `attestation_id`
+  - `registered_at_block`
+  - `weights_root`
+  - `attestation_commitment`
+  - field-normalized digest inputs
+  - Merkle path elements and indices
 
-### 10.4 `relay-attestation`
+Exit behavior:
+
+- non-zero exit if path lengths differ
+- non-zero exit if any path index is non-binary
+- non-zero exit if the recomputed Merkle root does not match `weights_root`
+
+### 10.3 `render-attestation-package`
 
 Inputs:
 
-- attestation ID
-- source and destination identifiers
-- adapter mode
-
-Behavior:
-
-- fetch source record
-- wait for finality
-- gather signatures
-- generate semantic proof if needed
-- build relay package
-- submit destination transaction
+- `--manifest`
+- `--semantic-input`
+- `--source-chain-id`
+- `--source-registry`
+- `--source-block-number`
+- `--source-block-hash`
+- `--registered-at-time`
+- `--adapter-id`
+- `--finality-delay-blocks`
+- `--semantic-circuit-version`
+- optional `--proof-file`
+- optional `--public-signals-file`
+- optional `--signatures-file`
+- `--output`
 
 Outputs:
 
-- destination tx hash
-- package hash
+- attestation relay package JSON aligned with the destination verifier contract
 
-### 10.5 `query-attestation`
+### 10.4 `register-eval-claim`
 
-Must return:
+Inputs:
+
+- `--attestation-id`
+- `--benchmark-digest`
+- `--dataset-split-digest`
+- `--inference-config-digest`
+- `--randomness-seed-digest`
+- `--transcript-sample-count`
+- `--transcript-version`
+- `--threshold-bps`
+- `--evaluator`
+- `--evaluator-policy-digest`
+- `--evaluator-policy-version`
+- `--output`
+
+Outputs:
+
+- evaluation claim manifest JSON containing:
+  - structured transcript digests
+  - computed `eval_transcript_digest`
+  - evaluator identity fields
+  - threshold and policy metadata
+
+### 10.5 `build-eval-input`
+
+Inputs:
+
+- `--manifest`
+- `--exact-score`
+- `--salt`
+- `--output`
+
+Outputs:
+
+- evaluation witness input JSON containing:
+  - `attestation_id`
+  - `benchmark_digest_field`
+  - `eval_transcript_digest_field`
+  - `score_commitment`
+  - `threshold_bps`
+  - `exact_score`
+  - `salt`
+
+### 10.6 `render-eval-package`
+
+Inputs:
+
+- `--manifest`
+- `--eval-input`
+- `--source-chain-id`
+- `--source-registry`
+- `--source-block-number`
+- `--source-block-hash`
+- `--claimed-at-block`
+- `--adapter-id`
+- `--finality-delay-blocks`
+- `--eval-circuit-version`
+- `--evaluator-signature`
+- optional `--proof-file`
+- optional `--public-signals-file`
+- optional `--signatures-file`
+- `--output`
+
+Outputs:
+
+- evaluation relay package JSON aligned with the destination verifier contract
+
+### 10.7 `query-attestation`
+
+Current behavior:
+
+- placeholder command used to reserve the interface shape for future source or destination lookups
+
+Future behavior should return:
 
 - source record summary
 - destination verification state
@@ -1006,89 +1083,98 @@ Must return:
 - semantic circuit version
 - revocation status
 
-### 10.6 `export-evidence`
-
-Must export:
-
-- attestation source record
-- evaluation source records
-- destination verification records
-- trust metadata
-- referenced digests and content URIs if available
-
 ---
 
 ## 11. Coordinator API and State
 
-### 11.1 Health API
+### 11.1 Current Reference Implementation
 
-`GET /health`
+The current coordinator is an in-process Python service, not an HTTP server. It exposes:
 
-Response:
+- `health()`
+- `submit_job()`
+- `start_job()`
+- `complete_job()`
+- `fail_job()`
+- `get_job()`
+- `list_jobs()`
+- `prepare_attestation_bundle()`
+- `prepare_eval_bundle()`
+
+### 11.2 Health State
+
+`health()` returns:
 
 ```json
 {
-  "status": "healthy",
-  "source_chain_id": "11155111",
-  "last_processed_block": "123520",
-  "queue_depth": 4,
-  "pending_signature_requests": 1,
-  "proof_jobs_in_progress": 1,
-  "last_successful_submission": 1775602222,
-  "adapter_mode": "committee-v1"
+  "status": "idle",
+  "queue_depth": 0,
+  "pending_signature_requests": 0,
+  "proof_jobs_in_progress": 0,
+  "completed_jobs": 0,
+  "failed_jobs": 0
 }
 ```
 
-### 11.2 Optional Package Preview API
+### 11.3 Bundle Preparation Methods
 
-`GET /packages/attestation/{sourceChainId}/{registry}/{attestationId}`
+`prepare_attestation_bundle(request)` must:
 
-Returns:
+1. write `attestation_manifest.json`
+2. write `semantic_input.json`
+3. write `attestation_package.json`
+4. record job state transitions around the bundle-preparation run
 
-- fully materialized attestation relay package JSON
-- package build status
+`prepare_eval_bundle(request)` must:
 
-### 11.3 Coordinator State Tables
+1. write `eval_claim_manifest.json`
+2. write `eval_input.json`
+3. write `eval_package.json`
+4. record job state transitions around the bundle-preparation run
 
-Recommended tables:
+Both methods currently delegate to the CLI entrypoint and return:
 
-```sql
-CREATE TABLE jobs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    package_type TEXT NOT NULL,
-    source_chain_id TEXT NOT NULL,
-    source_registry TEXT NOT NULL,
-    attestation_id TEXT NOT NULL,
-    benchmark_digest TEXT,
-    source_block_number TEXT NOT NULL,
-    state TEXT NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    package_path TEXT,
-    dest_tx_hash TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
+- the normalized job record
+- the generated artifact paths
 
-CREATE TABLE source_progress (
-    source_chain_id TEXT NOT NULL,
-    source_registry TEXT NOT NULL,
-    last_processed_block TEXT NOT NULL,
-    PRIMARY KEY (source_chain_id, source_registry)
-);
-```
+### 11.4 Request Shapes
 
-### 11.4 Job States
+The coordinator currently materializes these request types:
 
-Valid job states:
+- `AttestationBundleRequest`
+- `EvalBundleRequest`
 
-- `detected`
-- `waiting_finality`
-- `collecting_signatures`
-- `building_proof`
-- `ready_to_submit`
-- `submitted`
-- `confirmed`
+These carry the same normalized fields required by the CLI layer, including optional proof, public signal, and committee signature file paths.
+
+### 11.5 Current State Model
+
+The current reference implementation stores state in memory:
+
+- `jobs` map keyed by `job_id`
+- `job_order` list preserving submission order
+- aggregate `CoordinatorStatus`
+
+This is sufficient for local orchestration and tests, but not for crash recovery or multi-worker deployment.
+
+### 11.6 Future Service API
+
+A future coordinator service may expose HTTP endpoints such as:
+
+- `GET /health`
+- `POST /bundles/attestation`
+- `POST /bundles/eval`
+- `GET /jobs/{jobId}`
+
+### 11.7 Job States
+
+Current job states:
+
+- `queued`
+- `running`
+- `completed`
 - `failed`
+
+Future distributed coordinator implementations may extend this with finer-grained states such as waiting for finality, collecting signatures, building proofs, and submission confirmation.
 
 ---
 

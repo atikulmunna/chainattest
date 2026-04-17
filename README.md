@@ -23,9 +23,9 @@ The system is designed for cases where the payload is not an asset transfer, but
 - `circuits/`
   Circom circuits, proving artifacts, and verifier exports
 - `cli/`
-  Python CLI scaffold
+  Python CLI for attestation and eval manifests, witness inputs, and relay package generation
 - `coordinator/`
-  Coordinator service scaffold
+  Python coordinator service with in-memory job tracking and bundle preparation helpers
 - `committee/`
   Committee signer service scaffold
 - `schemas/`
@@ -41,6 +41,9 @@ The repository currently includes:
 - evaluation threshold verification with generated Groth16 verifier contracts
 - evaluator EIP-712 attestations for evaluation claims
 - structured transcript commitments and evaluator policy metadata checks for eval claims
+- a working CLI flow for manifest generation, witness preparation, and relay package rendering
+- a coordinator helper that orchestrates CLI-based attestation and eval bundle preparation
+- GitHub Actions CI for contract build/test and Python CLI/coordinator checks
 - end-to-end relay tests covering valid flows, replay rejection, signature failures, public input mismatches, and invalid proofs
 
 ## Architecture Summary
@@ -73,8 +76,8 @@ npm test
 ```text
 contracts/    Solidity contracts and contract tests
 circuits/     Circom circuits and proving artifacts
-cli/          Python CLI scaffold
-coordinator/  Python coordinator scaffold
+cli/          Python CLI for manifests, witness inputs, and relay packages
+coordinator/  Python coordinator with job tracking and bundle preparation helpers
 committee/    Committee signer service scaffold
 schemas/      JSON schemas for source records
 benchmarks/   Benchmark-related workspace
@@ -84,6 +87,6 @@ docs/         Supplemental docs
 ## Near-Term Priorities
 
 1. Add richer transcript summaries beyond metadata-only transcript commitments.
-2. Extend the CLI/coordinator path into full witness generation and signed package orchestration.
-3. Add deployment automation and CI for the contract and circuit toolchains.
+2. Extend the CLI/coordinator path into full proving, signing, and destination-submission orchestration.
+3. Expand deployment automation and CI coverage for circuit regeneration, proving artifacts, and integration flows.
 4. Add source-to-destination integration scripts that connect the registry, CLI, and verifier contracts.
