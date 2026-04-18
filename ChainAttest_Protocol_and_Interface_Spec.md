@@ -1100,6 +1100,10 @@ The current coordinator is an in-process Python service, not an HTTP server. It 
 - `list_jobs()`
 - `prepare_attestation_bundle()`
 - `prepare_eval_bundle()`
+- `orchestrate_attestation()`
+- `orchestrate_eval()`
+- `submit_package()`
+- `resume_pending_jobs()`
 
 ### 11.2 Health State
 
@@ -1111,6 +1115,7 @@ The current coordinator is an in-process Python service, not an HTTP server. It 
   "queue_depth": 0,
   "pending_signature_requests": 0,
   "proof_jobs_in_progress": 0,
+  "submitted_jobs": 0,
   "completed_jobs": 0,
   "failed_jobs": 0
 }
@@ -1142,6 +1147,18 @@ Both methods currently delegate to the CLI entrypoint and return:
 - the normalized job record
 - the generated artifact paths
 
+`orchestrate_attestation(request)` and `orchestrate_eval(request)` additionally submit the generated relay package to the destination verifier when RPC URL, verifier address, and submitter key are configured.
+
+`submit_package(request)` creates a persisted destination-submission job and may either:
+
+- return in `submitted` state when the transaction has been broadcast but receipt waiting is disabled or timed out
+- return in `completed` state when the destination receipt is observed successfully
+
+`resume_pending_jobs()` reloads persisted job state and:
+
+- rebroadcasts `prepared` jobs that have all required submission metadata
+- polls `submitted` jobs for receipts and finalizes them when mined
+
 ### 11.4 Request Shapes
 
 The coordinator currently materializes these request types:
@@ -1159,7 +1176,9 @@ The current reference implementation stores state in memory:
 - `job_order` list preserving submission order
 - aggregate `CoordinatorStatus`
 
-This is sufficient for local orchestration and tests, but not for crash recovery, secure key isolation, or multi-worker deployment.
+The current reference implementation also persists this state to a JSON file under `coordinator/state/` by default so submission jobs can survive process restarts.
+
+This is sufficient for local orchestration and restart recovery, but not for secure key isolation, durable multi-writer coordination, or multi-worker deployment.
 
 ### 11.6 Future Service API
 
@@ -1176,10 +1195,12 @@ Current job states:
 
 - `queued`
 - `running`
+- `prepared`
+- `submitted`
 - `completed`
 - `failed`
 
-Future distributed coordinator implementations may extend this with finer-grained states such as waiting for finality, collecting signatures, building proofs, and submission confirmation.
+Future distributed coordinator implementations may extend this with finer-grained states such as waiting for finality, collecting signatures, building proofs, and multi-confirmation settlement.
 
 ---
 

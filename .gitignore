@@ -22,3 +22,4 @@ circuits/*_js/
 circuits/*.sym
 proofs/
 logs/
+coordinator/state/
