@@ -1168,7 +1168,7 @@ The coordinator currently materializes these request types:
 - `AttestationBundleRequest`
 - `EvalBundleRequest`
 
-These carry the same normalized fields required by the CLI layer, along with optional destination-domain metadata, environment-backed secret references, and proof or signature override paths.
+These carry the same normalized fields required by the CLI layer, along with optional destination-domain metadata, environment-backed secret references, command-backed signer or submitter hooks, and proof or signature override paths.
 
 ### 11.5 Current State Model
 
@@ -1184,6 +1184,14 @@ Persisted submission jobs must store secret references rather than raw private k
 
 - in-memory secret refs for same-process continuation
 - environment-variable secret refs for restart-safe continuation
+
+The current prototype also supports command-backed boundaries for:
+
+- committee approval signing
+- evaluator attestation signing
+- destination transaction submission
+
+When a command-backed boundary is used, the coordinator should pass only structured request payloads and environment-backed secret names, not raw private keys.
 
 This is sufficient for local orchestration and restart recovery, but not for secure key isolation, durable multi-writer coordination, or multi-worker deployment.
 

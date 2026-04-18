@@ -46,8 +46,9 @@ The repository currently includes:
 - destination-chain submission helpers with resumable submission jobs backed by persisted coordinator state
 - environment-backed secret references so persisted submission jobs do not store raw submitter keys
 - retryable destination submission failures with backoff and restart-aware retry
+- command-backed signer and submitter boundaries so the coordinator can delegate approvals, evaluator signing, and submission outside the process
 - GitHub Actions CI for contract build/test and Python CLI/coordinator checks
-- Python orchestration tests covering generated proofs, signed relay bundles, destination submission, and recovery after restart
+- Python orchestration tests covering generated proofs, signed relay bundles, destination submission, restart recovery, retry/backoff, and external signer boundaries
 - end-to-end relay tests covering valid flows, replay rejection, signature failures, public input mismatches, and invalid proofs
 
 ## Architecture Summary
@@ -91,6 +92,6 @@ docs/         Supplemental docs
 ## Near-Term Priorities
 
 1. Add richer transcript summaries beyond metadata-only transcript commitments.
-2. Move from local prototype secret handling to a real secret manager or signer boundary for production use.
+2. Replace the prototype command boundary with a production signer or secret-manager integration that enforces authn/authz and audit logging.
 3. Expand deployment automation and CI coverage for circuit regeneration, proving artifacts, and integration flows.
 4. Add source-to-destination integration scripts and operator tooling that connect the registry, CLI, coordinator, and verifier contracts.
