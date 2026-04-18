@@ -377,7 +377,7 @@ async function main() {
 
   if (payload.action === "deploy_destination_fixture") {
     const provider = new ethers.JsonRpcProvider(payload.rpcUrl);
-    const deployer = new ethers.Wallet(payload.privateKey, provider);
+    const deployer = new ethers.NonceManager(new ethers.Wallet(payload.privateKey, provider));
     const committeeArtifact = loadArtifact(path.join("adapters", "CommitteeAuthAdapter.sol", "CommitteeAuthAdapter.json"));
     const semanticGroth16Artifact = loadArtifact(
       path.join("generated", "SemanticGroth16Verifier.sol", "SemanticGroth16Verifier.json")
@@ -456,7 +456,7 @@ async function main() {
 
   if (payload.action === "submit_destination_package") {
     const provider = new ethers.JsonRpcProvider(payload.rpcUrl);
-    const signer = new ethers.Wallet(payload.privateKey, provider);
+    const signer = new ethers.NonceManager(new ethers.Wallet(payload.privateKey, provider));
     const iface = new ethers.Interface([
       `function ${packageFunctionName(payload.packageKind)}(bytes packageData)`,
     ]);
