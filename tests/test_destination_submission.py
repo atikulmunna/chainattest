@@ -297,6 +297,26 @@ class DestinationSubmissionTests(unittest.TestCase):
         self.assertNotIn(DEPLOYER_PRIVATE_KEY, serialized)
         self.assertIn(f"env:{SUBMITTER_ENV}", serialized)
 
+    def test_retries_retryable_submission_failures_after_rpc_recovery(self) -> None:
+        request = self._attestation_request()
+        request.destination_rpc_url = "http://127.0.0.1:1"
+
+        result = self.service.orchestrate_attestation(request)
+        submission = result["submission"]
+        self.assertIsNotNone(submission)
+        self.assertEqual(submission["state"], "failed")
+        self.assertEqual(submission["metadata"]["last_error_kind"], "transport_error")
+        self.assertTrue(submission["metadata"]["retryable"])
+
+        job_id = submission["job_id"]
+        self.service.jobs[job_id].metadata["destination_rpc_url"] = self.rpc_url
+        self.service.jobs[job_id].metadata["next_retry_at"] = 0
+        self.service._persist_state()
+
+        retried = self.service.retry_failed_jobs()
+        self.assertEqual(len(retried), 1)
+        self.assertEqual(self.service.get_job(job_id)["state"], "completed")
+
 
 if __name__ == "__main__":
     unittest.main()
