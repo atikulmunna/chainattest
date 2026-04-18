@@ -7,6 +7,7 @@ import shutil
 import socket
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -27,6 +28,10 @@ COMMITTEE_PRIVATE_KEYS = [
 EVALUATOR_PRIVATE_KEY = "0x7c8521182946e51e65338c2f58b0b2f1b3e7b5f5e5d7e5c9f1d9a1c7e5b6f4e3"
 ADAPTER_ID = "0x" + "77" * 32
 SUBMITTER_ENV = "CHAINATTEST_TEST_SUBMITTER_KEY"
+COMMITTEE_ENV_1 = "CHAINATTEST_TEST_COMMITTEE_KEY_1"
+COMMITTEE_ENV_2 = "CHAINATTEST_TEST_COMMITTEE_KEY_2"
+EVALUATOR_ENV = "CHAINATTEST_TEST_EVALUATOR_KEY"
+HOST_COMMAND = [sys.executable, str(REPO_ROOT / "committee" / "signer_service" / "host.py")]
 
 
 def sha256_digest(path: Path) -> str:
@@ -131,6 +136,9 @@ class DestinationSubmissionTests(unittest.TestCase):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="chainattest-destination-"))
         self.state_path = self.temp_dir / "jobs.json"
         os.environ[SUBMITTER_ENV] = DEPLOYER_PRIVATE_KEY
+        os.environ[COMMITTEE_ENV_1] = COMMITTEE_PRIVATE_KEYS[0]
+        os.environ[COMMITTEE_ENV_2] = COMMITTEE_PRIVATE_KEYS[1]
+        os.environ[EVALUATOR_ENV] = EVALUATOR_PRIVATE_KEY
         self.service = CoordinatorService(state_path=self.state_path)
         self.fixture = run_bridge(
             {
@@ -146,6 +154,9 @@ class DestinationSubmissionTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         os.environ.pop(SUBMITTER_ENV, None)
+        os.environ.pop(COMMITTEE_ENV_1, None)
+        os.environ.pop(COMMITTEE_ENV_2, None)
+        os.environ.pop(EVALUATOR_ENV, None)
         shutil.rmtree(self.temp_dir)
 
     def _attestation_request(self) -> AttestationBundleRequest:
@@ -316,6 +327,30 @@ class DestinationSubmissionTests(unittest.TestCase):
         retried = self.service.retry_failed_jobs()
         self.assertEqual(len(retried), 1)
         self.assertEqual(self.service.get_job(job_id)["state"], "completed")
+
+    def test_external_signer_boundary_handles_committee_evaluator_and_submitter(self) -> None:
+        attestation_request = self._attestation_request()
+        attestation_request.destination_submitter_private_key = None
+        attestation_request.destination_submitter_command = HOST_COMMAND
+        attestation_request.committee_private_keys = []
+        attestation_request.committee_key_envs = [COMMITTEE_ENV_1, COMMITTEE_ENV_2]
+        attestation_request.committee_signer_command = HOST_COMMAND
+
+        attestation_result = self.service.orchestrate_attestation(attestation_request)
+        self.assertEqual(attestation_result["submission"]["state"], "completed")
+
+        eval_request = self._eval_request()
+        eval_request.destination_submitter_private_key = None
+        eval_request.destination_submitter_command = HOST_COMMAND
+        eval_request.committee_private_keys = []
+        eval_request.committee_key_envs = [COMMITTEE_ENV_1, COMMITTEE_ENV_2]
+        eval_request.committee_signer_command = HOST_COMMAND
+        eval_request.evaluator_private_key = None
+        eval_request.evaluator_key_env = EVALUATOR_ENV
+        eval_request.evaluator_signer_command = HOST_COMMAND
+
+        eval_result = self.service.orchestrate_eval(eval_request)
+        self.assertEqual(eval_result["submission"]["state"], "completed")
 
 
 if __name__ == "__main__":
