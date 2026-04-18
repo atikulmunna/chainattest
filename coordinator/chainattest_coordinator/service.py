@@ -8,7 +8,15 @@ import sys
 import time
 from uuid import uuid4
 
-from committee.signer_service.signer import ApprovalRequest, CommitteeSigner, EvalAttestationRequest
+from committee.signer_service.signer import (
+    ApprovalRequest,
+    CommandApprovalRequest,
+    CommandEvalAttestationRequest,
+    CommandSignerClient,
+    CommandSubmissionRequest,
+    CommitteeSigner,
+    EvalAttestationRequest,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_ENTRYPOINT = REPO_ROOT / "cli" / "chain_attest" / "main.py"
@@ -66,9 +74,12 @@ class AttestationBundleRequest:
     destination_rpc_url: str | None = None
     destination_submitter_private_key: str | None = None
     destination_submitter_key_env: str | None = None
+    destination_submitter_command: list[str] = field(default_factory=list)
     destination_verifier_address: str | None = None
     committee_verifier_address: str | None = None
     committee_private_keys: list[str] = field(default_factory=list)
+    committee_key_envs: list[str] = field(default_factory=list)
+    committee_signer_command: list[str] = field(default_factory=list)
     committee_threshold: int | None = None
     proof_file: Path | None = None
     public_signals_file: Path | None = None
@@ -103,12 +114,17 @@ class EvalBundleRequest:
     destination_rpc_url: str | None = None
     destination_submitter_private_key: str | None = None
     destination_submitter_key_env: str | None = None
+    destination_submitter_command: list[str] = field(default_factory=list)
     destination_verifier_address: str | None = None
     committee_verifier_address: str | None = None
     committee_private_keys: list[str] = field(default_factory=list)
+    committee_key_envs: list[str] = field(default_factory=list)
+    committee_signer_command: list[str] = field(default_factory=list)
     committee_threshold: int | None = None
     eval_verifier_address: str | None = None
     evaluator_private_key: str | None = None
+    evaluator_key_env: str | None = None
+    evaluator_signer_command: list[str] = field(default_factory=list)
     evaluator_signature: str = "0x"
     proof_file: Path | None = None
     public_signals_file: Path | None = None
@@ -134,6 +150,7 @@ class SubmissionRequest:
     destination_verifier_address: str
     destination_submitter_private_key: str | None = None
     destination_submitter_secret_ref: str | None = None
+    destination_submitter_command: list[str] = field(default_factory=list)
     wait_for_receipt: bool = True
     receipt_timeout_seconds: float = 30.0
     poll_interval_seconds: float = 1.0
@@ -230,6 +247,7 @@ class CoordinatorService:
             request.destination_rpc_url,
             request.destination_submitter_private_key,
             request.destination_submitter_key_env,
+            request.destination_submitter_command,
             request.destination_verifier_address,
         ):
             submitter_secret_ref = self._register_secret_ref(
@@ -245,6 +263,7 @@ class CoordinatorService:
                     destination_rpc_url=request.destination_rpc_url,
                     destination_verifier_address=request.destination_verifier_address,
                     destination_submitter_secret_ref=submitter_secret_ref,
+                    destination_submitter_command=request.destination_submitter_command,
                     wait_for_receipt=wait_for_receipt,
                     receipt_timeout_seconds=receipt_timeout_seconds,
                     poll_interval_seconds=poll_interval_seconds,
@@ -268,6 +287,7 @@ class CoordinatorService:
             request.destination_rpc_url,
             request.destination_submitter_private_key,
             request.destination_submitter_key_env,
+            request.destination_submitter_command,
             request.destination_verifier_address,
         ):
             submitter_secret_ref = self._register_secret_ref(
@@ -283,6 +303,7 @@ class CoordinatorService:
                     destination_rpc_url=request.destination_rpc_url,
                     destination_verifier_address=request.destination_verifier_address,
                     destination_submitter_secret_ref=submitter_secret_ref,
+                    destination_submitter_command=request.destination_submitter_command,
                     wait_for_receipt=wait_for_receipt,
                     receipt_timeout_seconds=receipt_timeout_seconds,
                     poll_interval_seconds=poll_interval_seconds,
@@ -311,6 +332,7 @@ class CoordinatorService:
                     "package_kind": request.package_kind,
                     "destination_rpc_url": request.destination_rpc_url,
                     "destination_verifier_address": request.destination_verifier_address,
+                    "destination_submitter_command": request.destination_submitter_command,
                     "destination_submitter_secret_ref": request.destination_submitter_secret_ref
                     or self._register_secret_ref(
                         job_key=job.job_id,
@@ -471,6 +493,8 @@ class CoordinatorService:
                     destination_chain_id=request.destination_chain_id,
                     verifier_address=request.committee_verifier_address,
                     private_keys=request.committee_private_keys,
+                    key_envs=request.committee_key_envs,
+                    signer_command=request.committee_signer_command,
                     threshold=request.committee_threshold,
                 )
             else:
@@ -587,6 +611,8 @@ class CoordinatorService:
                 destination_chain_id=request.destination_chain_id,
                 verifier_address=request.eval_verifier_address,
                 private_key=request.evaluator_private_key,
+                private_key_env=request.evaluator_key_env,
+                signer_command=request.evaluator_signer_command,
                 existing_signature=request.evaluator_signature,
             )
             if request.signatures_file is None:
@@ -596,6 +622,8 @@ class CoordinatorService:
                     destination_chain_id=request.destination_chain_id,
                     verifier_address=request.committee_verifier_address,
                     private_keys=request.committee_private_keys,
+                    key_envs=request.committee_key_envs,
+                    signer_command=request.committee_signer_command,
                     threshold=request.committee_threshold,
                 )
             else:
@@ -702,17 +730,30 @@ class CoordinatorService:
         if job.state != JobState.SUBMITTED:
             self.status.submitted_jobs += 1
         job.attempts += 1
-        submitter_private_key = self._resolve_secret_ref(job.metadata["destination_submitter_secret_ref"])
-        response = self._run_bridge(
-            {
-                "action": "submit_destination_package",
-                "rpcUrl": job.metadata["destination_rpc_url"],
-                "privateKey": submitter_private_key,
-                "verifierAddress": job.metadata["destination_verifier_address"],
-                "packageKind": job.metadata["package_kind"],
-                "package": package_payload,
-            }
-        )
+        submitter_command = job.metadata.get("destination_submitter_command", [])
+        if submitter_command:
+            submitter_key_env = self._env_name_from_secret_ref(job.metadata["destination_submitter_secret_ref"])
+            response = CommandSignerClient(submitter_command).submit_package(
+                CommandSubmissionRequest(
+                    package=package_payload,
+                    package_kind=job.metadata["package_kind"],
+                    destination_rpc_url=job.metadata["destination_rpc_url"],
+                    destination_verifier_address=job.metadata["destination_verifier_address"],
+                    submitter_key_env=submitter_key_env,
+                )
+            )
+        else:
+            submitter_private_key = self._resolve_secret_ref(job.metadata["destination_submitter_secret_ref"])
+            response = self._run_bridge(
+                {
+                    "action": "submit_destination_package",
+                    "rpcUrl": job.metadata["destination_rpc_url"],
+                    "privateKey": submitter_private_key,
+                    "verifierAddress": job.metadata["destination_verifier_address"],
+                    "packageKind": job.metadata["package_kind"],
+                    "package": package_payload,
+                }
+            )
         job.state = JobState.SUBMITTED
         job.tx_hash = response["txHash"]
         job.error = None
@@ -763,12 +804,17 @@ class CoordinatorService:
         rpc_url: str | None,
         submitter_private_key: str | None,
         submitter_key_env: str | None,
+        submitter_command: list[str],
         verifier_address: str | None,
     ) -> bool:
         return (
             rpc_url is not None
             and verifier_address is not None
-            and (submitter_private_key is not None or submitter_key_env is not None)
+            and (
+                submitter_private_key is not None
+                or submitter_key_env is not None
+                or bool(submitter_command)
+            )
         )
 
     def _generate_proof(
@@ -819,23 +865,37 @@ class CoordinatorService:
         destination_chain_id: int | None,
         verifier_address: str | None,
         private_keys: list[str],
+        key_envs: list[str],
+        signer_command: list[str],
         threshold: int | None,
     ) -> Path | None:
-        if destination_chain_id is None or verifier_address is None or not private_keys:
+        if destination_chain_id is None or verifier_address is None:
             return None
 
         package_payload = self._load_json(package_path)
-        signer = CommitteeSigner(private_keys)
         self.status.pending_signature_requests += 1
         try:
-            response = signer.approve(
-                ApprovalRequest(
-                    package=package_payload,
-                    destination_chain_id=destination_chain_id,
-                    verifier_address=verifier_address,
-                    threshold=threshold,
+            if signer_command:
+                response = CommandSignerClient(signer_command).approve(
+                    CommandApprovalRequest(
+                        package=package_payload,
+                        destination_chain_id=destination_chain_id,
+                        verifier_address=verifier_address,
+                        committee_key_envs=key_envs,
+                        threshold=threshold,
+                    )
                 )
-            )
+            else:
+                if not private_keys:
+                    return None
+                response = CommitteeSigner(private_keys).approve(
+                    ApprovalRequest(
+                        package=package_payload,
+                        destination_chain_id=destination_chain_id,
+                        verifier_address=verifier_address,
+                        threshold=threshold,
+                    )
+                )
         finally:
             self.status.pending_signature_requests -= 1
 
@@ -848,23 +908,38 @@ class CoordinatorService:
         destination_chain_id: int | None,
         verifier_address: str | None,
         private_key: str | None,
+        private_key_env: str | None,
+        signer_command: list[str],
         existing_signature: str,
     ) -> str:
         if existing_signature != "0x":
             return existing_signature
-        if destination_chain_id is None or verifier_address is None or private_key is None:
+        if destination_chain_id is None or verifier_address is None:
             return existing_signature
 
         package_payload = self._load_json(package_path)
-        signer = CommitteeSigner([])
-        signed = signer.sign_eval_attestation(
-            EvalAttestationRequest(
-                package=package_payload,
-                destination_chain_id=destination_chain_id,
-                verifier_address=verifier_address,
-                private_key=private_key,
+        if signer_command:
+            if private_key_env is None:
+                raise ValueError("evaluator key env is required when using an external evaluator signer command")
+            signed = CommandSignerClient(signer_command).sign_eval_attestation(
+                CommandEvalAttestationRequest(
+                    package=package_payload,
+                    destination_chain_id=destination_chain_id,
+                    verifier_address=verifier_address,
+                    private_key_env=private_key_env,
+                )
             )
-        )
+        else:
+            if private_key is None:
+                return existing_signature
+            signed = CommitteeSigner([]).sign_eval_attestation(
+                EvalAttestationRequest(
+                    package=package_payload,
+                    destination_chain_id=destination_chain_id,
+                    verifier_address=verifier_address,
+                    private_key=private_key,
+                )
+            )
         if signed["signerAddress"].lower() != package_payload["evaluator"].lower():
             raise ValueError("evaluator private key does not match package evaluator address")
         if signed["evaluatorKeyId"].lower() != package_payload["evaluatorKeyId"].lower():
@@ -908,6 +983,11 @@ class CoordinatorService:
                 )
             return value
         raise ValueError(f"unsupported secret ref: {secret_ref}")
+
+    def _env_name_from_secret_ref(self, secret_ref: str) -> str:
+        if not secret_ref.startswith("env:"):
+            raise ValueError("external signer and submitter commands require environment-backed secret refs")
+        return secret_ref.split(":", 1)[1]
 
     def _schedule_retry_if_retryable(self, job_id: str, error: Exception) -> bool:
         job = self.jobs[job_id]
