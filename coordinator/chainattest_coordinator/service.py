@@ -137,6 +137,9 @@ class SubmissionRequest:
     wait_for_receipt: bool = True
     receipt_timeout_seconds: float = 30.0
     poll_interval_seconds: float = 1.0
+    max_attempts: int = 3
+    retry_backoff_seconds: float = 2.0
+    retry_backoff_multiplier: float = 2.0
 
 
 class CoordinatorService:
@@ -318,6 +321,9 @@ class CoordinatorService:
                     "wait_for_receipt": request.wait_for_receipt,
                     "receipt_timeout_seconds": request.receipt_timeout_seconds,
                     "poll_interval_seconds": request.poll_interval_seconds,
+                    "max_attempts": request.max_attempts,
+                    "retry_backoff_seconds": request.retry_backoff_seconds,
+                    "retry_backoff_multiplier": request.retry_backoff_multiplier,
                 },
             )
             self._submit_prepared_job(job.job_id, package_payload)
@@ -329,8 +335,10 @@ class CoordinatorService:
                 )
             return self.get_job(job.job_id)
         except Exception as error:
+            if self._schedule_retry_if_retryable(job.job_id, error):
+                return self.get_job(job.job_id)
             self.fail_job(job.job_id, str(error))
-            raise
+            return self.get_job(job.job_id)
 
     def resume_pending_jobs(self) -> list[dict]:
         resumed: list[dict] = []
@@ -358,7 +366,25 @@ class CoordinatorService:
                     else:
                         self.fail_job(job_id, f"destination transaction failed: {job.tx_hash}")
                     resumed.append(self.get_job(job_id))
+            elif job.state == JobState.FAILED and self._is_retry_due(job):
+                try:
+                    package_payload = self._load_json(Path(job.metadata["package_path"]))
+                    self._mark_prepared(job_id, job.metadata)
+                    self._submit_prepared_job(job_id, package_payload)
+                    if job.metadata.get("wait_for_receipt", True):
+                        self._wait_for_job_receipt(
+                            job_id,
+                            timeout_seconds=float(job.metadata.get("receipt_timeout_seconds", 30.0)),
+                            poll_interval_seconds=float(job.metadata.get("poll_interval_seconds", 1.0)),
+                        )
+                except Exception as error:
+                    if not self._schedule_retry_if_retryable(job_id, error):
+                        self.fail_job(job_id, str(error))
+                resumed.append(self.get_job(job_id))
         return resumed
+
+    def retry_failed_jobs(self) -> list[dict]:
+        return self.resume_pending_jobs()
 
     def prepare_attestation_bundle(self, request: AttestationBundleRequest) -> dict:
         request.output_dir.mkdir(parents=True, exist_ok=True)
@@ -675,6 +701,7 @@ class CoordinatorService:
             self.status.proof_jobs_in_progress -= 1
         if job.state != JobState.SUBMITTED:
             self.status.submitted_jobs += 1
+        job.attempts += 1
         submitter_private_key = self._resolve_secret_ref(job.metadata["destination_submitter_secret_ref"])
         response = self._run_bridge(
             {
@@ -688,8 +715,10 @@ class CoordinatorService:
         )
         job.state = JobState.SUBMITTED
         job.tx_hash = response["txHash"]
-        job.attempts += 1
         job.error = None
+        job.metadata.pop("last_error_kind", None)
+        job.metadata.pop("retryable", None)
+        job.metadata.pop("next_retry_at", None)
         job.updated_at = int(time.time())
         self._refresh_status()
         self._persist_state()
@@ -705,6 +734,7 @@ class CoordinatorService:
         while time.time() <= deadline:
             job = self.jobs[job_id]
             receipt = self._fetch_receipt(job.tx_hash, job.metadata["destination_rpc_url"])
+            job.metadata["last_receipt_check_at"] = int(time.time())
             if receipt is not None:
                 job.metadata["receipt"] = receipt
                 if int(receipt["status"]) == 1:
@@ -878,6 +908,74 @@ class CoordinatorService:
                 )
             return value
         raise ValueError(f"unsupported secret ref: {secret_ref}")
+
+    def _schedule_retry_if_retryable(self, job_id: str, error: Exception) -> bool:
+        job = self.jobs[job_id]
+        error_kind, retryable = self._classify_submission_error(error)
+        max_attempts = int(job.metadata.get("max_attempts", 3))
+        if not retryable or job.attempts >= max_attempts:
+            return False
+
+        base = float(job.metadata.get("retry_backoff_seconds", 2.0))
+        multiplier = float(job.metadata.get("retry_backoff_multiplier", 2.0))
+        delay = base * (multiplier ** max(job.attempts - 1, 0))
+        self._schedule_retry(job_id, str(error), error_kind, delay)
+        return True
+
+    def _schedule_retry(self, job_id: str, error: str, error_kind: str, delay_seconds: float) -> CoordinatorJob:
+        job = self.jobs[job_id]
+        if job.state == JobState.RUNNING:
+            self.status.proof_jobs_in_progress -= 1
+        elif job.state == JobState.SUBMITTED:
+            self.status.submitted_jobs -= 1
+        job.state = JobState.FAILED
+        job.error = error
+        job.metadata["last_error_kind"] = error_kind
+        job.metadata["retryable"] = True
+        job.metadata["next_retry_at"] = time.time() + delay_seconds
+        job.updated_at = int(time.time())
+        self.status.failed_jobs += 1
+        self._refresh_status()
+        self._persist_state()
+        return job
+
+    def _classify_submission_error(self, error: Exception) -> tuple[str, bool]:
+        message = str(error).lower()
+        stderr = ""
+        if isinstance(error, subprocess.CalledProcessError):
+            stderr = (error.stderr or "").lower()
+            message = f"{message} {stderr}"
+
+        if "required secret environment variable" in message or "runtime secret is unavailable" in message:
+            return ("secret_unavailable", False)
+        if "execution reverted" in message or "invalidproof" in message or "replaydetected" in message:
+            return ("contract_revert", False)
+        if "unsupported secret ref" in message or "unsupported package kind" in message:
+            return ("configuration_error", False)
+        if any(
+            token in message
+            for token in [
+                "econnrefused",
+                "network",
+                "socket",
+                "timeout",
+                "missing response",
+                "connect",
+                "connection",
+                "server error",
+                "temporarily unavailable",
+            ]
+        ):
+            return ("transport_error", True)
+        if isinstance(error, subprocess.CalledProcessError):
+            return ("bridge_error", True)
+        return ("submission_error", False)
+
+    def _is_retry_due(self, job: CoordinatorJob) -> bool:
+        if not job.metadata.get("retryable", False):
+            return False
+        next_retry_at = float(job.metadata.get("next_retry_at", 0))
+        return time.time() >= next_retry_at
 
     def _load_state(self) -> None:
         if not self.state_path.exists():
