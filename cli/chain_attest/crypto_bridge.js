@@ -1,4 +1,5 @@
 const fs = require("fs");
+const path = require("path");
 const { ethers } = require("../../contracts/node_modules/ethers");
 const circomlibjs = require("../../circuits/node_modules/circomlibjs");
 
@@ -38,9 +39,112 @@ const EVAL_CLAIM_ATTESTATION_TYPES = {
     { name: "evalCircuitVersion", type: "uint32" },
   ],
 };
+const ARTIFACTS_ROOT = path.join(__dirname, "..", "..", "contracts", "artifacts", "src");
 
 function fieldFromHex(hexValue) {
   return (BigInt(hexValue) % BN254_FIELD_MODULUS).toString();
+}
+
+function attestationPackageType() {
+  return `tuple(
+    uint16 packageVersion,
+    uint8 packageType,
+    uint256 sourceChainId,
+    address sourceRegistry,
+    uint256 sourceBlockNumber,
+    bytes32 sourceBlockHash,
+    uint256 attestationId,
+    bytes32 modelFileDigest,
+    uint256 weightsRoot,
+    bytes32 datasetCommitment,
+    bytes32 trainingCommitment,
+    bytes32 metadataDigest,
+    address owner,
+    uint256 parentAttestationId,
+    uint256 registeredAtBlock,
+    uint256 registeredAtTime,
+    uint256 attestationCommitment,
+    bytes32 adapterId,
+    uint256 finalityDelayBlocks,
+    tuple(address signer, bytes signature)[] signatures,
+    uint32 semanticCircuitVersion,
+    tuple(uint256[2] pA, uint256[2][2] pB, uint256[2] pC) proof,
+    uint256[5] publicSignals
+  )`;
+}
+
+function evalPackageType() {
+  return `tuple(
+    uint16 packageVersion,
+    uint8 packageType,
+    uint256 sourceChainId,
+    address sourceRegistry,
+    uint256 sourceBlockNumber,
+    bytes32 sourceBlockHash,
+    uint256 attestationId,
+    bytes32 benchmarkDigest,
+    bytes32 evalTranscriptDigest,
+    bytes32 datasetSplitDigest,
+    bytes32 inferenceConfigDigest,
+    bytes32 randomnessSeedDigest,
+    uint32 transcriptSampleCount,
+    uint32 transcriptVersion,
+    uint256 scoreCommitment,
+    uint32 thresholdBps,
+    address evaluator,
+    bytes32 evaluatorKeyId,
+    bytes32 evaluatorPolicyDigest,
+    uint32 evaluatorPolicyVersion,
+    bytes evaluatorSignature,
+    uint256 claimedAtBlock,
+    bytes32 adapterId,
+    uint256 finalityDelayBlocks,
+    tuple(address signer, bytes signature)[] signatures,
+    uint32 evalCircuitVersion,
+    tuple(uint256[2] pA, uint256[2][2] pB, uint256[2] pC) proof,
+    uint256[6] publicSignals
+  )`;
+}
+
+function loadArtifact(relativePath) {
+  return JSON.parse(fs.readFileSync(path.join(ARTIFACTS_ROOT, relativePath), "utf8"));
+}
+
+function packageTupleType(kind) {
+  if (kind === "attestation") {
+    return attestationPackageType();
+  }
+  if (kind === "eval") {
+    return evalPackageType();
+  }
+  throw new Error(`unknown package kind: ${kind}`);
+}
+
+function packageFunctionName(kind) {
+  if (kind === "attestation") {
+    return "verifyAttestationPackage";
+  }
+  if (kind === "eval") {
+    return "verifyEvalClaimPackage";
+  }
+  throw new Error(`unknown package kind: ${kind}`);
+}
+
+function verificationKey(kind, pkg) {
+  if (kind === "attestation") {
+    return ethers.keccak256(
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["uint256", "address", "uint256"],
+        [BigInt(pkg.sourceChainId), pkg.sourceRegistry, BigInt(pkg.attestationId)]
+      )
+    );
+  }
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      ["uint256", "address", "uint256", "bytes32"],
+      [BigInt(pkg.sourceChainId), pkg.sourceRegistry, BigInt(pkg.attestationId), pkg.benchmarkDigest]
+    )
+  );
 }
 
 function evaluatorKeyIdForAddress(address) {
@@ -269,6 +373,166 @@ async function main() {
       })
     );
     return;
+  }
+
+  if (payload.action === "deploy_destination_fixture") {
+    const provider = new ethers.JsonRpcProvider(payload.rpcUrl);
+    const deployer = new ethers.Wallet(payload.privateKey, provider);
+    const committeeArtifact = loadArtifact(path.join("adapters", "CommitteeAuthAdapter.sol", "CommitteeAuthAdapter.json"));
+    const semanticGroth16Artifact = loadArtifact(
+      path.join("generated", "SemanticGroth16Verifier.sol", "SemanticGroth16Verifier.json")
+    );
+    const evalGroth16Artifact = loadArtifact(
+      path.join("generated", "EvalGroth16Verifier.sol", "EvalGroth16Verifier.json")
+    );
+    const semanticVerifierArtifact = loadArtifact(path.join("SemanticVerifier.sol", "SemanticVerifier.json"));
+    const evalVerifierArtifact = loadArtifact(path.join("EvalThresholdVerifier.sol", "EvalThresholdVerifier.json"));
+
+    const committeeFactory = new ethers.ContractFactory(
+      committeeArtifact.abi,
+      committeeArtifact.bytecode,
+      deployer
+    );
+    const committee = await committeeFactory.deploy(
+      payload.adapterId,
+      Number(payload.committeeThreshold),
+      payload.committeeSigners
+    );
+    await committee.waitForDeployment();
+
+    const semanticGroth16Factory = new ethers.ContractFactory(
+      semanticGroth16Artifact.abi,
+      semanticGroth16Artifact.bytecode,
+      deployer
+    );
+    const semanticGroth16 = await semanticGroth16Factory.deploy();
+    await semanticGroth16.waitForDeployment();
+
+    const evalGroth16Factory = new ethers.ContractFactory(
+      evalGroth16Artifact.abi,
+      evalGroth16Artifact.bytecode,
+      deployer
+    );
+    const evalGroth16 = await evalGroth16Factory.deploy();
+    await evalGroth16.waitForDeployment();
+
+    const semanticVerifierFactory = new ethers.ContractFactory(
+      semanticVerifierArtifact.abi,
+      semanticVerifierArtifact.bytecode,
+      deployer
+    );
+    const semanticVerifier = await semanticVerifierFactory.deploy(
+      await committee.getAddress(),
+      await semanticGroth16.getAddress()
+    );
+    await semanticVerifier.waitForDeployment();
+
+    const evalVerifierFactory = new ethers.ContractFactory(
+      evalVerifierArtifact.abi,
+      evalVerifierArtifact.bytecode,
+      deployer
+    );
+    const evalVerifier = await evalVerifierFactory.deploy(
+      await committee.getAddress(),
+      await semanticVerifier.getAddress(),
+      await evalGroth16.getAddress(),
+      payload.authorizedEvaluators || []
+    );
+    await evalVerifier.waitForDeployment();
+
+    const network = await provider.getNetwork();
+    process.stdout.write(
+      JSON.stringify({
+        chainId: network.chainId.toString(),
+        committeeAuthAdapter: await committee.getAddress(),
+        semanticGroth16Verifier: await semanticGroth16.getAddress(),
+        evalGroth16Verifier: await evalGroth16.getAddress(),
+        semanticVerifier: await semanticVerifier.getAddress(),
+        evalThresholdVerifier: await evalVerifier.getAddress(),
+      })
+    );
+    return;
+  }
+
+  if (payload.action === "submit_destination_package") {
+    const provider = new ethers.JsonRpcProvider(payload.rpcUrl);
+    const signer = new ethers.Wallet(payload.privateKey, provider);
+    const iface = new ethers.Interface([
+      `function ${packageFunctionName(payload.packageKind)}(bytes packageData)`,
+    ]);
+    const packageData = ethers.AbiCoder.defaultAbiCoder().encode(
+      [packageTupleType(payload.packageKind)],
+      [payload.package]
+    );
+    const tx = await signer.sendTransaction({
+      to: payload.verifierAddress,
+      data: iface.encodeFunctionData(packageFunctionName(payload.packageKind), [packageData]),
+    });
+    process.stdout.write(
+      JSON.stringify({
+        txHash: tx.hash,
+        packageData,
+      })
+    );
+    return;
+  }
+
+  if (payload.action === "get_transaction_receipt") {
+    const provider = new ethers.JsonRpcProvider(payload.rpcUrl);
+    const receipt = await provider.getTransactionReceipt(payload.txHash);
+    process.stdout.write(
+      JSON.stringify({
+        receipt: receipt
+          ? {
+              hash: receipt.hash,
+              blockNumber: receipt.blockNumber,
+              status: receipt.status,
+            }
+          : null,
+      })
+    );
+    return;
+  }
+
+  if (payload.action === "query_destination_verification") {
+    const provider = new ethers.JsonRpcProvider(payload.rpcUrl);
+    const kind = payload.packageKind;
+    const pkg = payload.package;
+    const key = verificationKey(kind, pkg);
+    if (kind === "attestation") {
+      const artifact = loadArtifact(path.join("SemanticVerifier.sol", "SemanticVerifier.json"));
+      const contract = new ethers.Contract(payload.verifierAddress, artifact.abi, provider);
+      const verified = await contract.isVerified(pkg.sourceChainId, pkg.sourceRegistry, pkg.attestationId);
+      const record = await contract.verifiedAttestations(key);
+      process.stdout.write(
+        JSON.stringify({
+          verified,
+          key,
+          record: {
+            verifiedAt: record.verifiedAt.toString(),
+            revoked: record.revoked,
+          },
+        })
+      );
+      return;
+    }
+
+    if (kind === "eval") {
+      const artifact = loadArtifact(path.join("EvalThresholdVerifier.sol", "EvalThresholdVerifier.json"));
+      const contract = new ethers.Contract(payload.verifierAddress, artifact.abi, provider);
+      const record = await contract.verifiedEvalClaims(key);
+      process.stdout.write(
+        JSON.stringify({
+          verified: record.verifiedAt > 0n && !record.revoked,
+          key,
+          record: {
+            verifiedAt: record.verifiedAt.toString(),
+            revoked: record.revoked,
+          },
+        })
+      );
+      return;
+    }
   }
 
   throw new Error(`Unknown action: ${payload.action}`);
