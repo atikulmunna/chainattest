@@ -1,6 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -64,6 +65,7 @@ class AttestationBundleRequest:
     destination_chain_id: int | None = None
     destination_rpc_url: str | None = None
     destination_submitter_private_key: str | None = None
+    destination_submitter_key_env: str | None = None
     destination_verifier_address: str | None = None
     committee_verifier_address: str | None = None
     committee_private_keys: list[str] = field(default_factory=list)
@@ -100,6 +102,7 @@ class EvalBundleRequest:
     destination_chain_id: int | None = None
     destination_rpc_url: str | None = None
     destination_submitter_private_key: str | None = None
+    destination_submitter_key_env: str | None = None
     destination_verifier_address: str | None = None
     committee_verifier_address: str | None = None
     committee_private_keys: list[str] = field(default_factory=list)
@@ -129,7 +132,8 @@ class SubmissionRequest:
     package_kind: str
     destination_rpc_url: str
     destination_verifier_address: str
-    destination_submitter_private_key: str
+    destination_submitter_private_key: str | None = None
+    destination_submitter_secret_ref: str | None = None
     wait_for_receipt: bool = True
     receipt_timeout_seconds: float = 30.0
     poll_interval_seconds: float = 1.0
@@ -141,6 +145,7 @@ class CoordinatorService:
         self.status = CoordinatorStatus()
         self.jobs: dict[str, CoordinatorJob] = {}
         self.job_order: list[str] = []
+        self.runtime_secrets: dict[str, str] = {}
         self._load_state()
 
     def health(self) -> dict:
@@ -221,15 +226,22 @@ class CoordinatorService:
         if self._can_submit_destination(
             request.destination_rpc_url,
             request.destination_submitter_private_key,
+            request.destination_submitter_key_env,
             request.destination_verifier_address,
         ):
+            submitter_secret_ref = self._register_secret_ref(
+                job_key=str(bundle["job"]["job_id"]),
+                secret=request.destination_submitter_private_key,
+                env_name=request.destination_submitter_key_env,
+                purpose="destination_submitter",
+            )
             submission = self.submit_package(
                 SubmissionRequest(
                     package_path=Path(bundle["package_path"]),
                     package_kind="attestation",
                     destination_rpc_url=request.destination_rpc_url,
                     destination_verifier_address=request.destination_verifier_address,
-                    destination_submitter_private_key=request.destination_submitter_private_key,
+                    destination_submitter_secret_ref=submitter_secret_ref,
                     wait_for_receipt=wait_for_receipt,
                     receipt_timeout_seconds=receipt_timeout_seconds,
                     poll_interval_seconds=poll_interval_seconds,
@@ -252,15 +264,22 @@ class CoordinatorService:
         if self._can_submit_destination(
             request.destination_rpc_url,
             request.destination_submitter_private_key,
+            request.destination_submitter_key_env,
             request.destination_verifier_address,
         ):
+            submitter_secret_ref = self._register_secret_ref(
+                job_key=str(bundle["job"]["job_id"]),
+                secret=request.destination_submitter_private_key,
+                env_name=request.destination_submitter_key_env,
+                purpose="destination_submitter",
+            )
             submission = self.submit_package(
                 SubmissionRequest(
                     package_path=Path(bundle["package_path"]),
                     package_kind="eval",
                     destination_rpc_url=request.destination_rpc_url,
                     destination_verifier_address=request.destination_verifier_address,
-                    destination_submitter_private_key=request.destination_submitter_private_key,
+                    destination_submitter_secret_ref=submitter_secret_ref,
                     wait_for_receipt=wait_for_receipt,
                     receipt_timeout_seconds=receipt_timeout_seconds,
                     poll_interval_seconds=poll_interval_seconds,
@@ -289,7 +308,13 @@ class CoordinatorService:
                     "package_kind": request.package_kind,
                     "destination_rpc_url": request.destination_rpc_url,
                     "destination_verifier_address": request.destination_verifier_address,
-                    "destination_submitter_private_key": request.destination_submitter_private_key,
+                    "destination_submitter_secret_ref": request.destination_submitter_secret_ref
+                    or self._register_secret_ref(
+                        job_key=job.job_id,
+                        secret=request.destination_submitter_private_key,
+                        env_name=None,
+                        purpose="destination_submitter",
+                    ),
                     "wait_for_receipt": request.wait_for_receipt,
                     "receipt_timeout_seconds": request.receipt_timeout_seconds,
                     "poll_interval_seconds": request.poll_interval_seconds,
@@ -650,11 +675,12 @@ class CoordinatorService:
             self.status.proof_jobs_in_progress -= 1
         if job.state != JobState.SUBMITTED:
             self.status.submitted_jobs += 1
+        submitter_private_key = self._resolve_secret_ref(job.metadata["destination_submitter_secret_ref"])
         response = self._run_bridge(
             {
                 "action": "submit_destination_package",
                 "rpcUrl": job.metadata["destination_rpc_url"],
-                "privateKey": job.metadata["destination_submitter_private_key"],
+                "privateKey": submitter_private_key,
                 "verifierAddress": job.metadata["destination_verifier_address"],
                 "packageKind": job.metadata["package_kind"],
                 "package": package_payload,
@@ -706,9 +732,14 @@ class CoordinatorService:
         self,
         rpc_url: str | None,
         submitter_private_key: str | None,
+        submitter_key_env: str | None,
         verifier_address: str | None,
     ) -> bool:
-        return rpc_url is not None and submitter_private_key is not None and verifier_address is not None
+        return (
+            rpc_url is not None
+            and verifier_address is not None
+            and (submitter_private_key is not None or submitter_key_env is not None)
+        )
 
     def _generate_proof(
         self,
@@ -816,6 +847,37 @@ class CoordinatorService:
     def _dump_json(self, path: Path, payload: dict | list) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2) + "\n")
+
+    def _register_secret_ref(
+        self,
+        job_key: str,
+        secret: str | None,
+        env_name: str | None,
+        purpose: str,
+    ) -> str:
+        if env_name is not None:
+            return f"env:{env_name}"
+        if secret is None:
+            raise ValueError(f"{purpose} secret is required")
+        ref = f"memory:{job_key}:{purpose}"
+        self.runtime_secrets[ref] = secret
+        return ref
+
+    def _resolve_secret_ref(self, secret_ref: str) -> str:
+        if secret_ref.startswith("env:"):
+            env_name = secret_ref.split(":", 1)[1]
+            value = os.environ.get(env_name)
+            if value is None:
+                raise ValueError(f"required secret environment variable is missing: {env_name}")
+            return value
+        if secret_ref.startswith("memory:"):
+            value = self.runtime_secrets.get(secret_ref)
+            if value is None:
+                raise ValueError(
+                    "required runtime secret is unavailable after restart; use an environment-backed secret ref"
+                )
+            return value
+        raise ValueError(f"unsupported secret ref: {secret_ref}")
 
     def _load_state(self) -> None:
         if not self.state_path.exists():
