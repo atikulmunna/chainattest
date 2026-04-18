@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 from uuid import uuid4
 
 from committee.signer_service.signer import ApprovalRequest, CommitteeSigner, EvalAttestationRequest
@@ -17,6 +18,8 @@ SNARKJS_ENTRYPOINT = CIRCUITS_ROOT / "node_modules" / "snarkjs" / "build" / "cli
 class JobState(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    PREPARED = "prepared"
+    SUBMITTED = "submitted"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -29,6 +32,11 @@ class CoordinatorJob:
     output_path: str | None = None
     state: JobState = JobState.QUEUED
     error: str | None = None
+    attempts: int = 0
+    tx_hash: str | None = None
+    metadata: dict = field(default_factory=dict)
+    created_at: int = 0
+    updated_at: int = 0
 
 
 @dataclass
@@ -54,6 +62,9 @@ class AttestationBundleRequest:
     output_dir: Path
     semantic_circuit_version: int = 1
     destination_chain_id: int | None = None
+    destination_rpc_url: str | None = None
+    destination_submitter_private_key: str | None = None
+    destination_verifier_address: str | None = None
     committee_verifier_address: str | None = None
     committee_private_keys: list[str] = field(default_factory=list)
     committee_threshold: int | None = None
@@ -87,6 +98,9 @@ class EvalBundleRequest:
     output_dir: Path
     eval_circuit_version: int = 1
     destination_chain_id: int | None = None
+    destination_rpc_url: str | None = None
+    destination_submitter_private_key: str | None = None
+    destination_verifier_address: str | None = None
     committee_verifier_address: str | None = None
     committee_private_keys: list[str] = field(default_factory=list)
     committee_threshold: int | None = None
@@ -104,31 +118,50 @@ class CoordinatorStatus:
     queue_depth: int = 0
     pending_signature_requests: int = 0
     proof_jobs_in_progress: int = 0
+    submitted_jobs: int = 0
     completed_jobs: int = 0
     failed_jobs: int = 0
 
 
+@dataclass
+class SubmissionRequest:
+    package_path: Path
+    package_kind: str
+    destination_rpc_url: str
+    destination_verifier_address: str
+    destination_submitter_private_key: str
+    wait_for_receipt: bool = True
+    receipt_timeout_seconds: float = 30.0
+    poll_interval_seconds: float = 1.0
+
+
 class CoordinatorService:
-    def __init__(self) -> None:
+    def __init__(self, state_path: Path | None = None) -> None:
+        self.state_path = state_path or (REPO_ROOT / "coordinator" / "state" / "jobs.json")
         self.status = CoordinatorStatus()
         self.jobs: dict[str, CoordinatorJob] = {}
         self.job_order: list[str] = []
+        self._load_state()
 
     def health(self) -> dict:
         return asdict(self.status)
 
     def submit_job(self, job_kind: str, input_path: Path, output_path: Path | None = None) -> CoordinatorJob:
+        now = int(time.time())
         job = CoordinatorJob(
             job_id=f"job-{uuid4()}",
             job_kind=job_kind,
             input_path=str(input_path),
             output_path=str(output_path) if output_path else None,
+            created_at=now,
+            updated_at=now,
         )
         self.jobs[job.job_id] = job
         self.job_order.append(job.job_id)
         self.status.queue_depth += 1
         if self.status.status == "idle":
             self.status.status = "active"
+        self._persist_state()
         return job
 
     def start_job(self, job_id: str) -> CoordinatorJob:
@@ -137,27 +170,37 @@ class CoordinatorService:
             self.status.queue_depth -= 1
             self.status.proof_jobs_in_progress += 1
         job.state = JobState.RUNNING
+        job.updated_at = int(time.time())
+        self._persist_state()
         return job
 
     def complete_job(self, job_id: str) -> CoordinatorJob:
         job = self.jobs[job_id]
         if job.state == JobState.RUNNING:
             self.status.proof_jobs_in_progress -= 1
+        elif job.state == JobState.SUBMITTED:
+            self.status.submitted_jobs -= 1
         job.state = JobState.COMPLETED
+        job.updated_at = int(time.time())
         self.status.completed_jobs += 1
         self._refresh_status()
+        self._persist_state()
         return job
 
     def fail_job(self, job_id: str, error: str) -> CoordinatorJob:
         job = self.jobs[job_id]
         if job.state == JobState.RUNNING:
             self.status.proof_jobs_in_progress -= 1
+        elif job.state == JobState.SUBMITTED:
+            self.status.submitted_jobs -= 1
         elif job.state == JobState.QUEUED:
             self.status.queue_depth -= 1
         job.state = JobState.FAILED
         job.error = error
+        job.updated_at = int(time.time())
         self.status.failed_jobs += 1
         self._refresh_status()
+        self._persist_state()
         return job
 
     def get_job(self, job_id: str) -> dict:
@@ -165,6 +208,132 @@ class CoordinatorService:
 
     def list_jobs(self) -> list[dict]:
         return [asdict(self.jobs[job_id]) for job_id in self.job_order]
+
+    def orchestrate_attestation(
+        self,
+        request: AttestationBundleRequest,
+        wait_for_receipt: bool = True,
+        receipt_timeout_seconds: float = 30.0,
+        poll_interval_seconds: float = 1.0,
+    ) -> dict:
+        bundle = self.prepare_attestation_bundle(request)
+        submission = None
+        if self._can_submit_destination(
+            request.destination_rpc_url,
+            request.destination_submitter_private_key,
+            request.destination_verifier_address,
+        ):
+            submission = self.submit_package(
+                SubmissionRequest(
+                    package_path=Path(bundle["package_path"]),
+                    package_kind="attestation",
+                    destination_rpc_url=request.destination_rpc_url,
+                    destination_verifier_address=request.destination_verifier_address,
+                    destination_submitter_private_key=request.destination_submitter_private_key,
+                    wait_for_receipt=wait_for_receipt,
+                    receipt_timeout_seconds=receipt_timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                )
+            )
+        return {
+            "bundle": bundle,
+            "submission": submission,
+        }
+
+    def orchestrate_eval(
+        self,
+        request: EvalBundleRequest,
+        wait_for_receipt: bool = True,
+        receipt_timeout_seconds: float = 30.0,
+        poll_interval_seconds: float = 1.0,
+    ) -> dict:
+        bundle = self.prepare_eval_bundle(request)
+        submission = None
+        if self._can_submit_destination(
+            request.destination_rpc_url,
+            request.destination_submitter_private_key,
+            request.destination_verifier_address,
+        ):
+            submission = self.submit_package(
+                SubmissionRequest(
+                    package_path=Path(bundle["package_path"]),
+                    package_kind="eval",
+                    destination_rpc_url=request.destination_rpc_url,
+                    destination_verifier_address=request.destination_verifier_address,
+                    destination_submitter_private_key=request.destination_submitter_private_key,
+                    wait_for_receipt=wait_for_receipt,
+                    receipt_timeout_seconds=receipt_timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                )
+            )
+        return {
+            "bundle": bundle,
+            "submission": submission,
+        }
+
+    def submit_package(self, request: SubmissionRequest, job_id: str | None = None) -> dict:
+        job = self.jobs[job_id] if job_id is not None else self.submit_job(
+            f"submit_{request.package_kind}_package",
+            request.package_path,
+            request.package_path,
+        )
+        if job.state == JobState.QUEUED:
+            self.start_job(job.job_id)
+
+        try:
+            package_payload = self._load_json(request.package_path)
+            self._mark_prepared(
+                job.job_id,
+                {
+                    "package_path": str(request.package_path),
+                    "package_kind": request.package_kind,
+                    "destination_rpc_url": request.destination_rpc_url,
+                    "destination_verifier_address": request.destination_verifier_address,
+                    "destination_submitter_private_key": request.destination_submitter_private_key,
+                    "wait_for_receipt": request.wait_for_receipt,
+                    "receipt_timeout_seconds": request.receipt_timeout_seconds,
+                    "poll_interval_seconds": request.poll_interval_seconds,
+                },
+            )
+            self._submit_prepared_job(job.job_id, package_payload)
+            if request.wait_for_receipt:
+                self._wait_for_job_receipt(
+                    job.job_id,
+                    timeout_seconds=request.receipt_timeout_seconds,
+                    poll_interval_seconds=request.poll_interval_seconds,
+                )
+            return self.get_job(job.job_id)
+        except Exception as error:
+            self.fail_job(job.job_id, str(error))
+            raise
+
+    def resume_pending_jobs(self) -> list[dict]:
+        resumed: list[dict] = []
+        for job_id in list(self.job_order):
+            job = self.jobs[job_id]
+            if job.state == JobState.PREPARED:
+                try:
+                    package_payload = self._load_json(Path(job.metadata["package_path"]))
+                    self._submit_prepared_job(job_id, package_payload)
+                    if job.metadata.get("wait_for_receipt", True):
+                        self._wait_for_job_receipt(
+                            job_id,
+                            timeout_seconds=float(job.metadata.get("receipt_timeout_seconds", 30.0)),
+                            poll_interval_seconds=float(job.metadata.get("poll_interval_seconds", 1.0)),
+                        )
+                except Exception as error:
+                    self.fail_job(job_id, str(error))
+                resumed.append(self.get_job(job_id))
+            elif job.state == JobState.SUBMITTED:
+                receipt = self._fetch_receipt(job.tx_hash, job.metadata["destination_rpc_url"])
+                if receipt is not None:
+                    if int(receipt["status"]) == 1:
+                        job.metadata["receipt"] = receipt
+                        self.complete_job(job_id)
+                    else:
+                        self.fail_job(job_id, f"destination transaction failed: {job.tx_hash}")
+                    resumed.append(self.get_job(job_id))
+        return resumed
 
     def prepare_attestation_bundle(self, request: AttestationBundleRequest) -> dict:
         request.output_dir.mkdir(parents=True, exist_ok=True)
@@ -427,8 +596,14 @@ class CoordinatorService:
             raise
 
     def _refresh_status(self) -> None:
-        if self.status.queue_depth == 0 and self.status.proof_jobs_in_progress == 0:
+        if (
+            self.status.queue_depth == 0
+            and self.status.proof_jobs_in_progress == 0
+            and self.status.submitted_jobs == 0
+        ):
             self.status.status = "idle"
+        else:
+            self.status.status = "active"
 
     def _run_cli(self, *args: str) -> None:
         subprocess.run(
@@ -439,6 +614,17 @@ class CoordinatorService:
             text=True,
         )
 
+    def _run_bridge(self, payload: dict) -> dict:
+        result = subprocess.run(
+            ["node", str(REPO_ROOT / "cli" / "chain_attest" / "crypto_bridge.js")],
+            input=json.dumps(payload),
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(result.stdout)
+
     def _optional_path_args(self, flag: str, path: Path | None) -> list[str]:
         if path is None:
             return []
@@ -446,6 +632,83 @@ class CoordinatorService:
 
     def _csv(self, values: list[int]) -> str:
         return ",".join(str(value) for value in values)
+
+    def _mark_prepared(self, job_id: str, metadata: dict) -> CoordinatorJob:
+        job = self.jobs[job_id]
+        if job.state == JobState.RUNNING:
+            self.status.proof_jobs_in_progress -= 1
+        job.state = JobState.PREPARED
+        job.metadata = metadata
+        job.updated_at = int(time.time())
+        self._refresh_status()
+        self._persist_state()
+        return job
+
+    def _submit_prepared_job(self, job_id: str, package_payload: dict) -> CoordinatorJob:
+        job = self.jobs[job_id]
+        if job.state == JobState.RUNNING:
+            self.status.proof_jobs_in_progress -= 1
+        if job.state != JobState.SUBMITTED:
+            self.status.submitted_jobs += 1
+        response = self._run_bridge(
+            {
+                "action": "submit_destination_package",
+                "rpcUrl": job.metadata["destination_rpc_url"],
+                "privateKey": job.metadata["destination_submitter_private_key"],
+                "verifierAddress": job.metadata["destination_verifier_address"],
+                "packageKind": job.metadata["package_kind"],
+                "package": package_payload,
+            }
+        )
+        job.state = JobState.SUBMITTED
+        job.tx_hash = response["txHash"]
+        job.attempts += 1
+        job.error = None
+        job.updated_at = int(time.time())
+        self._refresh_status()
+        self._persist_state()
+        return job
+
+    def _wait_for_job_receipt(
+        self,
+        job_id: str,
+        timeout_seconds: float = 30.0,
+        poll_interval_seconds: float = 1.0,
+    ) -> CoordinatorJob:
+        deadline = time.time() + timeout_seconds
+        while time.time() <= deadline:
+            job = self.jobs[job_id]
+            receipt = self._fetch_receipt(job.tx_hash, job.metadata["destination_rpc_url"])
+            if receipt is not None:
+                job.metadata["receipt"] = receipt
+                if int(receipt["status"]) == 1:
+                    self.complete_job(job_id)
+                else:
+                    self.fail_job(job_id, f"destination transaction failed: {job.tx_hash}")
+                return self.jobs[job_id]
+            time.sleep(poll_interval_seconds)
+        self._persist_state()
+        return self.jobs[job_id]
+
+    def _fetch_receipt(self, tx_hash: str | None, rpc_url: str) -> dict | None:
+        if tx_hash is None:
+            return None
+        response = self._run_bridge(
+            {
+                "action": "get_transaction_receipt",
+                "rpcUrl": rpc_url,
+                "txHash": tx_hash,
+            }
+        )
+        return response["receipt"]
+
+    def _can_submit_destination(
+        self,
+        rpc_url: str | None,
+        submitter_private_key: str | None,
+        verifier_address: str | None,
+    ) -> bool:
+        return rpc_url is not None and submitter_private_key is not None and verifier_address is not None
 
     def _generate_proof(
         self,
@@ -553,3 +816,29 @@ class CoordinatorService:
     def _dump_json(self, path: Path, payload: dict | list) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2) + "\n")
+
+    def _load_state(self) -> None:
+        if not self.state_path.exists():
+            return
+
+        payload = json.loads(self.state_path.read_text())
+        status_payload = payload.get("status")
+        if status_payload is not None:
+            self.status = CoordinatorStatus(**status_payload)
+
+        self.job_order = payload.get("job_order", [])
+        for raw_job in payload.get("jobs", []):
+            raw_job["state"] = JobState(raw_job["state"])
+            job = CoordinatorJob(**raw_job)
+            self.jobs[job.job_id] = job
+
+        self._refresh_status()
+
+    def _persist_state(self) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "status": asdict(self.status),
+            "job_order": self.job_order,
+            "jobs": [asdict(self.jobs[job_id]) for job_id in self.job_order],
+        }
+        self.state_path.write_text(json.dumps(payload, indent=2) + "\n")
