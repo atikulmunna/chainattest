@@ -74,7 +74,7 @@ class CoordinatorServiceTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="chainattest-coordinator-"))
-        self.service = CoordinatorService()
+        self.service = CoordinatorService(state_path=self.temp_dir / "jobs.json")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.temp_dir)
