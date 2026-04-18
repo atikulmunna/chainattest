@@ -63,6 +63,9 @@ jobs:
           npm ci --prefix contracts
           npm ci --prefix circuits
 
+      - name: Build contracts for bridge-backed tests
+        run: npm run build --prefix contracts
+
       - name: Install CLI package
         run: python -m pip install -e ./cli
 
