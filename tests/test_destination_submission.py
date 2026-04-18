@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import socket
 from pathlib import Path
@@ -25,6 +26,7 @@ COMMITTEE_PRIVATE_KEYS = [
 ]
 EVALUATOR_PRIVATE_KEY = "0x7c8521182946e51e65338c2f58b0b2f1b3e7b5f5e5d7e5c9f1d9a1c7e5b6f4e3"
 ADAPTER_ID = "0x" + "77" * 32
+SUBMITTER_ENV = "CHAINATTEST_TEST_SUBMITTER_KEY"
 
 
 def sha256_digest(path: Path) -> str:
@@ -128,6 +130,7 @@ class DestinationSubmissionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="chainattest-destination-"))
         self.state_path = self.temp_dir / "jobs.json"
+        os.environ[SUBMITTER_ENV] = DEPLOYER_PRIVATE_KEY
         self.service = CoordinatorService(state_path=self.state_path)
         self.fixture = run_bridge(
             {
@@ -142,6 +145,7 @@ class DestinationSubmissionTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        os.environ.pop(SUBMITTER_ENV, None)
         shutil.rmtree(self.temp_dir)
 
     def _attestation_request(self) -> AttestationBundleRequest:
@@ -191,6 +195,7 @@ class DestinationSubmissionTests(unittest.TestCase):
             destination_chain_id=int(self.fixture["chainId"]),
             destination_rpc_url=self.rpc_url,
             destination_submitter_private_key=DEPLOYER_PRIVATE_KEY,
+            destination_submitter_key_env=SUBMITTER_ENV,
             destination_verifier_address=self.fixture["semanticVerifier"],
             committee_verifier_address=self.fixture["committeeAuthAdapter"],
             committee_private_keys=COMMITTEE_PRIVATE_KEYS,
@@ -224,6 +229,7 @@ class DestinationSubmissionTests(unittest.TestCase):
             destination_chain_id=int(self.fixture["chainId"]),
             destination_rpc_url=self.rpc_url,
             destination_submitter_private_key=DEPLOYER_PRIVATE_KEY,
+            destination_submitter_key_env=SUBMITTER_ENV,
             destination_verifier_address=self.fixture["evalThresholdVerifier"],
             committee_verifier_address=self.fixture["committeeAuthAdapter"],
             committee_private_keys=COMMITTEE_PRIVATE_KEYS,
@@ -282,6 +288,14 @@ class DestinationSubmissionTests(unittest.TestCase):
         resumed = restarted.resume_pending_jobs()
         self.assertEqual(len(resumed), 1)
         self.assertEqual(restarted.get_job(submission["job_id"])["state"], "completed")
+
+    def test_persisted_state_uses_secret_refs_not_raw_private_keys(self) -> None:
+        self.service.orchestrate_attestation(self._attestation_request(), wait_for_receipt=False)
+        state_payload = json.loads(self.state_path.read_text())
+        serialized = json.dumps(state_payload)
+
+        self.assertNotIn(DEPLOYER_PRIVATE_KEY, serialized)
+        self.assertIn(f"env:{SUBMITTER_ENV}", serialized)
 
 
 if __name__ == "__main__":
