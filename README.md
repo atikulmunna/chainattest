@@ -44,6 +44,8 @@ The repository currently includes:
 - a working CLI flow for manifest generation, witness preparation, and relay package rendering
 - a coordinator helper that orchestrates CLI-based manifest building, Groth16 proof generation, evaluator signing, and committee approval collection
 - destination-chain submission helpers with resumable submission jobs backed by persisted coordinator state
+- environment-backed secret references so persisted submission jobs do not store raw submitter keys
+- retryable destination submission failures with backoff and restart-aware retry
 - GitHub Actions CI for contract build/test and Python CLI/coordinator checks
 - Python orchestration tests covering generated proofs, signed relay bundles, destination submission, and recovery after restart
 - end-to-end relay tests covering valid flows, replay rejection, signature failures, public input mismatches, and invalid proofs
@@ -89,6 +91,6 @@ docs/         Supplemental docs
 ## Near-Term Priorities
 
 1. Add richer transcript summaries beyond metadata-only transcript commitments.
-2. Add richer persistent coordinator state, retries, and safe secret-management boundaries beyond local prototype storage.
+2. Move from local prototype secret handling to a real secret manager or signer boundary for production use.
 3. Expand deployment automation and CI coverage for circuit regeneration, proving artifacts, and integration flows.
 4. Add source-to-destination integration scripts and operator tooling that connect the registry, CLI, coordinator, and verifier contracts.

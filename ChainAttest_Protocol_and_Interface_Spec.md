@@ -1153,11 +1153,13 @@ Both methods currently delegate to the CLI entrypoint and return:
 
 - return in `submitted` state when the transaction has been broadcast but receipt waiting is disabled or timed out
 - return in `completed` state when the destination receipt is observed successfully
+- return in `failed` state with retry metadata when a retryable transport or bridge error occurs
 
 `resume_pending_jobs()` reloads persisted job state and:
 
 - rebroadcasts `prepared` jobs that have all required submission metadata
 - polls `submitted` jobs for receipts and finalizes them when mined
+- retries `failed` jobs whose retry window has elapsed and whose failure kind is marked retryable
 
 ### 11.4 Request Shapes
 
@@ -1166,7 +1168,7 @@ The coordinator currently materializes these request types:
 - `AttestationBundleRequest`
 - `EvalBundleRequest`
 
-These carry the same normalized fields required by the CLI layer, along with optional destination-domain metadata, signer private keys, and proof or signature override paths.
+These carry the same normalized fields required by the CLI layer, along with optional destination-domain metadata, environment-backed secret references, and proof or signature override paths.
 
 ### 11.5 Current State Model
 
@@ -1177,6 +1179,11 @@ The current reference implementation stores state in memory:
 - aggregate `CoordinatorStatus`
 
 The current reference implementation also persists this state to a JSON file under `coordinator/state/` by default so submission jobs can survive process restarts.
+
+Persisted submission jobs must store secret references rather than raw private keys. The current prototype supports:
+
+- in-memory secret refs for same-process continuation
+- environment-variable secret refs for restart-safe continuation
 
 This is sufficient for local orchestration and restart recovery, but not for secure key isolation, durable multi-writer coordination, or multi-worker deployment.
 
@@ -1201,6 +1208,13 @@ Current job states:
 - `failed`
 
 Future distributed coordinator implementations may extend this with finer-grained states such as waiting for finality, collecting signatures, building proofs, and multi-confirmation settlement.
+
+Retry metadata may include:
+
+- `last_error_kind`
+- `retryable`
+- `next_retry_at`
+- `max_attempts`
 
 ---
 
