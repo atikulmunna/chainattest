@@ -18,8 +18,50 @@ def _require_env(env_name: str) -> str:
     return value
 
 
+def _parse_csv_env(env_name: str) -> set[str]:
+    raw = os.environ.get(env_name, "").strip()
+    if not raw:
+        return set()
+    return {value.strip().lower() for value in raw.split(",") if value.strip()}
+
+
+def _verify_auth(payload: dict) -> None:
+    expected = os.environ.get("CHAINATTEST_SIGNER_AUTH_TOKEN")
+    if expected is None:
+        return
+    provided = payload.get("authToken")
+    if provided != expected:
+        raise PermissionError("signer host authentication failed")
+
+
+def _enforce_policy(payload: dict) -> None:
+    allowed_actions = _parse_csv_env("CHAINATTEST_SIGNER_ALLOWED_ACTIONS")
+    if allowed_actions and payload["action"].lower() not in allowed_actions:
+        raise PermissionError(f"signer host policy rejected action: {payload['action']}")
+
+    allowed_verifiers = _parse_csv_env("CHAINATTEST_SIGNER_ALLOWED_VERIFIERS")
+    verifier = payload.get("verifierAddress")
+    if allowed_verifiers and verifier and verifier.lower() not in allowed_verifiers:
+        raise PermissionError(f"signer host policy rejected verifier: {verifier}")
+
+    allowed_package_kinds = _parse_csv_env("CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS")
+    package_kind = payload.get("packageKind")
+    if allowed_package_kinds and package_kind and package_kind.lower() not in allowed_package_kinds:
+        raise PermissionError(f"signer host policy rejected package kind: {package_kind}")
+
+    allowed_destination_chains = _parse_csv_env("CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS")
+    destination_chain = payload.get("destinationChainId")
+    if allowed_destination_chains and destination_chain is not None:
+        if str(destination_chain).lower() not in allowed_destination_chains:
+            raise PermissionError(
+                f"signer host policy rejected destination chain: {destination_chain}"
+            )
+
+
 def main() -> None:
     payload = json.load(sys.stdin)
+    _verify_auth(payload)
+    _enforce_policy(payload)
     action = payload["action"]
 
     if action == "approve":

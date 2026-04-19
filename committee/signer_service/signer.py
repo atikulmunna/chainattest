@@ -141,12 +141,16 @@ class CommandSignerClient:
                 **payload,
                 "authToken": auth_token,
             }
-        result = subprocess.run(
-            self.command,
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True,
-            check=True,
-            cwd=REPO_ROOT,
-        )
+        try:
+            result = subprocess.run(
+                self.command,
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                check=True,
+                cwd=REPO_ROOT,
+            )
+        except subprocess.CalledProcessError as error:
+            message = (error.stderr or error.stdout or str(error)).strip()
+            raise RuntimeError(message) from error
         return json.loads(result.stdout)
