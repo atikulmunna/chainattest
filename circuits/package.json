@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "engines": {
+    "node": "24.15.x",
+    "npm": "11.12.x"
+  },
+  "packageManager": "npm@11.12.1",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -11,11 +16,11 @@
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "circom2": "^0.2.22",
-    "circomlib": "^2.0.5",
-    "snarkjs": "^0.7.6"
+    "circom2": "0.2.22",
+    "circomlib": "2.0.5",
+    "snarkjs": "0.7.6"
   },
   "dependencies": {
-    "circomlibjs": "^0.1.7"
+    "circomlibjs": "0.1.7"
   }
 }
