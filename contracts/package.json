@@ -2,18 +2,22 @@
   "name": "chainattest-contracts",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "24.15.x",
+    "npm": "11.12.x"
+  },
+  "packageManager": "npm@11.12.1",
   "scripts": {
     "build": "hardhat compile",
     "test": "hardhat test",
     "lint": "echo \"Add Solidity linting/tooling here\""
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
-    "hardhat": "^2.22.0",
-    "typescript": "^5.6.3"
+    "@nomicfoundation/hardhat-toolbox": "5.0.0",
+    "hardhat": "2.28.6",
+    "typescript": "5.9.3"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.0.2"
+    "@openzeppelin/contracts": "5.6.1"
   }
 }
-
