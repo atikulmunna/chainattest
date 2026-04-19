@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import subprocess
 from typing import Sequence
@@ -93,10 +94,11 @@ class CommitteeSigner:
 
 
 class CommandSignerClient:
-    def __init__(self, command: Sequence[str]) -> None:
+    def __init__(self, command: Sequence[str], auth_token_env: str | None = None) -> None:
         if not command:
             raise ValueError("signer command is required")
         self.command = list(command)
+        self.auth_token_env = auth_token_env
 
     def approve(self, request: CommandApprovalRequest) -> dict:
         payload = {
@@ -131,6 +133,14 @@ class CommandSignerClient:
         return self._run_command(payload)
 
     def _run_command(self, payload: dict) -> dict:
+        if self.auth_token_env is not None:
+            auth_token = os.environ.get(self.auth_token_env)
+            if auth_token is None:
+                raise ValueError(f"required signer auth token env is missing: {self.auth_token_env}")
+            payload = {
+                **payload,
+                "authToken": auth_token,
+            }
         result = subprocess.run(
             self.command,
             input=json.dumps(payload),
