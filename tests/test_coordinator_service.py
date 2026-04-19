@@ -74,7 +74,10 @@ class CoordinatorServiceTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="chainattest-coordinator-"))
-        self.service = CoordinatorService(state_path=self.temp_dir / "jobs.json")
+        self.service = CoordinatorService(
+            state_path=self.temp_dir / "jobs.json",
+            audit_log_path=self.temp_dir / "audit.jsonl",
+        )
 
     def tearDown(self) -> None:
         shutil.rmtree(self.temp_dir)
@@ -186,6 +189,17 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertEqual(len(package["publicSignals"]), 6)
         self.assertTrue(Path(result["proof_path"]).exists())
         self.assertTrue(Path(result["signatures_path"]).exists())
+
+    def test_state_and_audit_persistence_do_not_leave_lock_files(self) -> None:
+        input_path = self.temp_dir / "input.json"
+        input_path.write_text("{}\n")
+
+        job = self.service.submit_job("durability-check", input_path)
+        self.service.start_job(job.job_id)
+        self.service.complete_job(job.job_id)
+
+        self.assertFalse((self.temp_dir / "jobs.json.lock").exists())
+        self.assertFalse((self.temp_dir / "audit.jsonl.lock").exists())
 
 
 if __name__ == "__main__":

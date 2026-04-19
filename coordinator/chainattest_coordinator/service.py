@@ -9,6 +9,7 @@ import time
 from uuid import uuid4
 
 from coordinator.chainattest_coordinator.audit import AuditLogger
+from coordinator.chainattest_coordinator.storage import atomic_write_text
 from committee.signer_service.signer import (
     ApprovalRequest,
     CommandApprovalRequest,
@@ -1118,13 +1119,12 @@ class CoordinatorService:
         self._refresh_status()
 
     def _persist_state(self) -> None:
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "status": asdict(self.status),
             "job_order": self.job_order,
             "jobs": [asdict(self.jobs[job_id]) for job_id in self.job_order],
         }
-        self.state_path.write_text(json.dumps(payload, indent=2) + "\n")
+        atomic_write_text(self.state_path, json.dumps(payload, indent=2) + "\n")
 
     def _audit(self, event_type: str, job: CoordinatorJob, extra: dict | None = None) -> None:
         metadata = {
