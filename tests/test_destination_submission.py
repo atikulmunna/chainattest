@@ -31,6 +31,7 @@ SUBMITTER_ENV = "CHAINATTEST_TEST_SUBMITTER_KEY"
 COMMITTEE_ENV_1 = "CHAINATTEST_TEST_COMMITTEE_KEY_1"
 COMMITTEE_ENV_2 = "CHAINATTEST_TEST_COMMITTEE_KEY_2"
 EVALUATOR_ENV = "CHAINATTEST_TEST_EVALUATOR_KEY"
+AUTH_TOKEN_ENV = "CHAINATTEST_TEST_SIGNER_AUTH_TOKEN"
 HOST_COMMAND = [sys.executable, str(REPO_ROOT / "committee" / "signer_service" / "host.py")]
 
 
@@ -139,6 +140,13 @@ class DestinationSubmissionTests(unittest.TestCase):
         os.environ[COMMITTEE_ENV_1] = COMMITTEE_PRIVATE_KEYS[0]
         os.environ[COMMITTEE_ENV_2] = COMMITTEE_PRIVATE_KEYS[1]
         os.environ[EVALUATOR_ENV] = EVALUATOR_PRIVATE_KEY
+        os.environ[AUTH_TOKEN_ENV] = "test-signer-token"
+        os.environ["CHAINATTEST_SIGNER_AUTH_TOKEN"] = "test-signer-token"
+        os.environ["CHAINATTEST_SIGNER_ALLOWED_ACTIONS"] = (
+            "approve,sign_eval_attestation,submit_destination_package"
+        )
+        os.environ["CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS"] = "attestation,eval"
+        os.environ["CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS"] = "31337"
         self.service = CoordinatorService(state_path=self.state_path)
         self.fixture = run_bridge(
             {
@@ -157,6 +165,11 @@ class DestinationSubmissionTests(unittest.TestCase):
         os.environ.pop(COMMITTEE_ENV_1, None)
         os.environ.pop(COMMITTEE_ENV_2, None)
         os.environ.pop(EVALUATOR_ENV, None)
+        os.environ.pop(AUTH_TOKEN_ENV, None)
+        os.environ.pop("CHAINATTEST_SIGNER_AUTH_TOKEN", None)
+        os.environ.pop("CHAINATTEST_SIGNER_ALLOWED_ACTIONS", None)
+        os.environ.pop("CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS", None)
+        os.environ.pop("CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS", None)
         shutil.rmtree(self.temp_dir)
 
     def _attestation_request(self) -> AttestationBundleRequest:
@@ -332,9 +345,11 @@ class DestinationSubmissionTests(unittest.TestCase):
         attestation_request = self._attestation_request()
         attestation_request.destination_submitter_private_key = None
         attestation_request.destination_submitter_command = HOST_COMMAND
+        attestation_request.destination_submitter_auth_token_env = AUTH_TOKEN_ENV
         attestation_request.committee_private_keys = []
         attestation_request.committee_key_envs = [COMMITTEE_ENV_1, COMMITTEE_ENV_2]
         attestation_request.committee_signer_command = HOST_COMMAND
+        attestation_request.committee_signer_auth_token_env = AUTH_TOKEN_ENV
 
         attestation_result = self.service.orchestrate_attestation(attestation_request)
         self.assertEqual(attestation_result["submission"]["state"], "completed")
@@ -342,15 +357,34 @@ class DestinationSubmissionTests(unittest.TestCase):
         eval_request = self._eval_request()
         eval_request.destination_submitter_private_key = None
         eval_request.destination_submitter_command = HOST_COMMAND
+        eval_request.destination_submitter_auth_token_env = AUTH_TOKEN_ENV
         eval_request.committee_private_keys = []
         eval_request.committee_key_envs = [COMMITTEE_ENV_1, COMMITTEE_ENV_2]
         eval_request.committee_signer_command = HOST_COMMAND
+        eval_request.committee_signer_auth_token_env = AUTH_TOKEN_ENV
         eval_request.evaluator_private_key = None
         eval_request.evaluator_key_env = EVALUATOR_ENV
         eval_request.evaluator_signer_command = HOST_COMMAND
+        eval_request.evaluator_signer_auth_token_env = AUTH_TOKEN_ENV
 
         eval_result = self.service.orchestrate_eval(eval_request)
         self.assertEqual(eval_result["submission"]["state"], "completed")
+
+    def test_external_signer_policy_rejects_disallowed_action(self) -> None:
+        os.environ["CHAINATTEST_SIGNER_ALLOWED_ACTIONS"] = "approve,sign_eval_attestation"
+
+        request = self._attestation_request()
+        request.destination_submitter_private_key = None
+        request.destination_submitter_command = HOST_COMMAND
+        request.destination_submitter_auth_token_env = AUTH_TOKEN_ENV
+        request.committee_private_keys = []
+        request.committee_key_envs = [COMMITTEE_ENV_1, COMMITTEE_ENV_2]
+        request.committee_signer_command = HOST_COMMAND
+        request.committee_signer_auth_token_env = AUTH_TOKEN_ENV
+
+        result = self.service.orchestrate_attestation(request)
+        self.assertEqual(result["submission"]["state"], "failed")
+        self.assertIn("policy rejected action", result["submission"]["error"].lower())
 
 
 if __name__ == "__main__":
