@@ -113,9 +113,21 @@ This repository is no longer only a paper scaffold. The current prototype includ
 
 ## Quick Start
 
+### Runtime Baseline
+
+The repository is pinned to the following toolchain baseline:
+
+- Node.js `24.15.0`
+- npm `11.12.1`
+- Python `3.11+`
+
+For local setup, the repo includes both `.nvmrc` and `.node-version` with `24.15.0`.
+The root `.npmrc` also enables `engine-strict=true`, so installs fail fast on unsupported Node/npm versions.
+
 ### Contracts
 
 ```bash
+nvm use
 cd contracts
 npm install
 npm run build
@@ -125,6 +137,7 @@ npm test
 ### Python Tooling
 
 ```bash
+nvm use
 python -m compileall cli coordinator committee tests
 python cli/chain_attest/main.py --help
 python coordinator/chainattest_coordinator/ops.py --help
