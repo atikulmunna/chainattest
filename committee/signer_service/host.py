@@ -8,6 +8,7 @@ import sys
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from coordinator.chainattest_coordinator.audit import AuditLogger
 from committee.signer_service.signer import ApprovalRequest, CommitteeSigner, EvalAttestationRequest
 
 
@@ -23,6 +24,34 @@ def _parse_csv_env(env_name: str) -> set[str]:
     if not raw:
         return set()
     return {value.strip().lower() for value in raw.split(",") if value.strip()}
+
+
+def _build_audit_logger() -> AuditLogger | None:
+    audit_path = os.environ.get("CHAINATTEST_SIGNER_AUDIT_LOG", "").strip()
+    if not audit_path:
+        return None
+    return AuditLogger(Path(audit_path))
+
+
+def _audit_event(logger: AuditLogger | None, event_type: str, payload: dict) -> None:
+    if logger is None:
+        return
+    logger.log(event_type, payload)
+
+
+def _audit_summary(payload: dict) -> dict:
+    package = payload.get("package")
+    summary = {
+        "action": payload.get("action"),
+        "destination_chain_id": payload.get("destinationChainId"),
+        "verifier_address": payload.get("verifierAddress"),
+        "package_kind": payload.get("packageKind"),
+    }
+    if isinstance(package, dict):
+        summary["package_type"] = package.get("packageType")
+        if "attestationId" in package:
+            summary["attestation_id"] = package["attestationId"]
+    return summary
 
 
 def _verify_auth(payload: dict) -> None:
@@ -59,56 +88,98 @@ def _enforce_policy(payload: dict) -> None:
 
 
 def main() -> None:
+    logger = _build_audit_logger()
     payload = json.load(sys.stdin)
-    _verify_auth(payload)
-    _enforce_policy(payload)
+    summary = _audit_summary(payload)
+
+    try:
+        _verify_auth(payload)
+    except Exception as exc:
+        _audit_event(logger, "signer_request_rejected", {**summary, "reason": str(exc)})
+        raise
+
+    try:
+        _enforce_policy(payload)
+    except Exception as exc:
+        _audit_event(logger, "signer_request_rejected", {**summary, "reason": str(exc)})
+        raise
+
     action = payload["action"]
+    _audit_event(logger, "signer_request_accepted", summary)
 
-    if action == "approve":
-        private_keys = [_require_env(env_name) for env_name in payload["committeeKeyEnvs"]]
-        signer = CommitteeSigner(private_keys)
-        response = signer.approve(
-            ApprovalRequest(
-                package=payload["package"],
-                destination_chain_id=int(payload["destinationChainId"]),
-                verifier_address=payload["verifierAddress"],
-                threshold=payload.get("threshold"),
+    try:
+        if action == "approve":
+            private_keys = [_require_env(env_name) for env_name in payload["committeeKeyEnvs"]]
+            signer = CommitteeSigner(private_keys)
+            response = signer.approve(
+                ApprovalRequest(
+                    package=payload["package"],
+                    destination_chain_id=int(payload["destinationChainId"]),
+                    verifier_address=payload["verifierAddress"],
+                    threshold=payload.get("threshold"),
+                )
             )
-        )
-        json.dump(response, sys.stdout)
-        return
-
-    if action == "sign_eval_attestation":
-        private_key = _require_env(payload["privateKeyEnv"])
-        signer = CommitteeSigner([])
-        response = signer.sign_eval_attestation(
-            EvalAttestationRequest(
-                package=payload["package"],
-                destination_chain_id=int(payload["destinationChainId"]),
-                verifier_address=payload["verifierAddress"],
-                private_key=private_key,
+            _audit_event(
+                logger,
+                "signer_request_completed",
+                {
+                    **summary,
+                    "signer_count": len(response["signatures"]),
+                },
             )
-        )
-        json.dump(response, sys.stdout)
-        return
+            json.dump(response, sys.stdout)
+            return
 
-    if action == "submit_destination_package":
-        private_key = _require_env(payload["privateKeyEnv"])
-        signer = CommitteeSigner([])
-        response = signer._run_bridge(
-            {
-                "action": "submit_destination_package",
-                "rpcUrl": payload["rpcUrl"],
-                "privateKey": private_key,
-                "verifierAddress": payload["verifierAddress"],
-                "packageKind": payload["packageKind"],
-                "package": payload["package"],
-            }
-        )
-        json.dump(response, sys.stdout)
-        return
+        if action == "sign_eval_attestation":
+            private_key = _require_env(payload["privateKeyEnv"])
+            signer = CommitteeSigner([])
+            response = signer.sign_eval_attestation(
+                EvalAttestationRequest(
+                    package=payload["package"],
+                    destination_chain_id=int(payload["destinationChainId"]),
+                    verifier_address=payload["verifierAddress"],
+                    private_key=private_key,
+                )
+            )
+            _audit_event(
+                logger,
+                "signer_request_completed",
+                {
+                    **summary,
+                    "signer_address": response["signerAddress"],
+                },
+            )
+            json.dump(response, sys.stdout)
+            return
 
-    raise ValueError(f"unsupported host action: {action}")
+        if action == "submit_destination_package":
+            private_key = _require_env(payload["privateKeyEnv"])
+            signer = CommitteeSigner([])
+            response = signer._run_bridge(
+                {
+                    "action": "submit_destination_package",
+                    "rpcUrl": payload["rpcUrl"],
+                    "privateKey": private_key,
+                    "verifierAddress": payload["verifierAddress"],
+                    "packageKind": payload["packageKind"],
+                    "package": payload["package"],
+                }
+            )
+            _audit_event(
+                logger,
+                "signer_request_completed",
+                {
+                    **summary,
+                    "tx_hash": response.get("txHash"),
+                },
+            )
+            json.dump(response, sys.stdout)
+            return
+
+        raise ValueError(f"unsupported host action: {action}")
+    except Exception as exc:
+        _audit_event(logger, "signer_request_failed", {**summary, "reason": str(exc)})
+        raise
 
 
 if __name__ == "__main__":

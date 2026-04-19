@@ -136,6 +136,8 @@ class DestinationSubmissionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="chainattest-destination-"))
         self.state_path = self.temp_dir / "jobs.json"
+        self.audit_log_path = self.temp_dir / "coordinator-audit.jsonl"
+        self.signer_audit_log_path = self.temp_dir / "signer-audit.jsonl"
         os.environ[SUBMITTER_ENV] = DEPLOYER_PRIVATE_KEY
         os.environ[COMMITTEE_ENV_1] = COMMITTEE_PRIVATE_KEYS[0]
         os.environ[COMMITTEE_ENV_2] = COMMITTEE_PRIVATE_KEYS[1]
@@ -147,7 +149,8 @@ class DestinationSubmissionTests(unittest.TestCase):
         )
         os.environ["CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS"] = "attestation,eval"
         os.environ["CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS"] = "31337"
-        self.service = CoordinatorService(state_path=self.state_path)
+        os.environ["CHAINATTEST_SIGNER_AUDIT_LOG"] = str(self.signer_audit_log_path)
+        self.service = CoordinatorService(state_path=self.state_path, audit_log_path=self.audit_log_path)
         self.fixture = run_bridge(
             {
                 "action": "deploy_destination_fixture",
@@ -170,7 +173,13 @@ class DestinationSubmissionTests(unittest.TestCase):
         os.environ.pop("CHAINATTEST_SIGNER_ALLOWED_ACTIONS", None)
         os.environ.pop("CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS", None)
         os.environ.pop("CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS", None)
+        os.environ.pop("CHAINATTEST_SIGNER_AUDIT_LOG", None)
         shutil.rmtree(self.temp_dir)
+
+    def _read_audit_log(self, path: Path) -> list[dict]:
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
     def _attestation_request(self) -> AttestationBundleRequest:
         model_path = self.temp_dir / "model.bin"
@@ -341,6 +350,21 @@ class DestinationSubmissionTests(unittest.TestCase):
         self.assertEqual(len(retried), 1)
         self.assertEqual(self.service.get_job(job_id)["state"], "completed")
 
+    def test_coordinator_audit_log_records_submission_lifecycle(self) -> None:
+        result = self.service.orchestrate_attestation(self._attestation_request())
+        submission = result["submission"]
+        self.assertIsNotNone(submission)
+
+        events = self._read_audit_log(self.audit_log_path)
+        event_types = [event["event_type"] for event in events if event["job_id"] == submission["job_id"]]
+
+        self.assertIn("job_submitted", event_types)
+        self.assertIn("job_started", event_types)
+        self.assertIn("job_prepared", event_types)
+        self.assertIn("destination_submission_broadcast", event_types)
+        self.assertIn("destination_receipt_observed", event_types)
+        self.assertIn("job_completed", event_types)
+
     def test_external_signer_boundary_handles_committee_evaluator_and_submitter(self) -> None:
         attestation_request = self._attestation_request()
         attestation_request.destination_submitter_private_key = None
@@ -370,6 +394,16 @@ class DestinationSubmissionTests(unittest.TestCase):
         eval_result = self.service.orchestrate_eval(eval_request)
         self.assertEqual(eval_result["submission"]["state"], "completed")
 
+        signer_events = self._read_audit_log(self.signer_audit_log_path)
+        completed_actions = {
+            event["action"]
+            for event in signer_events
+            if event["event_type"] == "signer_request_completed"
+        }
+        self.assertIn("approve", completed_actions)
+        self.assertIn("sign_eval_attestation", completed_actions)
+        self.assertIn("submit_destination_package", completed_actions)
+
     def test_external_signer_policy_rejects_disallowed_action(self) -> None:
         os.environ["CHAINATTEST_SIGNER_ALLOWED_ACTIONS"] = "approve,sign_eval_attestation"
 
@@ -385,6 +419,11 @@ class DestinationSubmissionTests(unittest.TestCase):
         result = self.service.orchestrate_attestation(request)
         self.assertEqual(result["submission"]["state"], "failed")
         self.assertIn("policy rejected action", result["submission"]["error"].lower())
+
+        signer_events = self._read_audit_log(self.signer_audit_log_path)
+        rejected = [event for event in signer_events if event["event_type"] == "signer_request_rejected"]
+        self.assertTrue(rejected)
+        self.assertIn("policy rejected action", rejected[-1]["reason"].lower())
 
 
 if __name__ == "__main__":
