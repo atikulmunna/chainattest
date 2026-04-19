@@ -8,6 +8,7 @@ import sys
 import time
 from uuid import uuid4
 
+from coordinator.chainattest_coordinator.audit import AuditLogger
 from committee.signer_service.signer import (
     ApprovalRequest,
     CommandApprovalRequest,
@@ -166,12 +167,14 @@ class SubmissionRequest:
 
 
 class CoordinatorService:
-    def __init__(self, state_path: Path | None = None) -> None:
+    def __init__(self, state_path: Path | None = None, audit_log_path: Path | None = None) -> None:
         self.state_path = state_path or (REPO_ROOT / "coordinator" / "state" / "jobs.json")
+        self.audit_log_path = audit_log_path or (REPO_ROOT / "coordinator" / "state" / "audit.jsonl")
         self.status = CoordinatorStatus()
         self.jobs: dict[str, CoordinatorJob] = {}
         self.job_order: list[str] = []
         self.runtime_secrets: dict[str, str] = {}
+        self.audit_logger = AuditLogger(self.audit_log_path)
         self._load_state()
 
     def health(self) -> dict:
@@ -193,6 +196,7 @@ class CoordinatorService:
         if self.status.status == "idle":
             self.status.status = "active"
         self._persist_state()
+        self._audit("job_submitted", job)
         return job
 
     def start_job(self, job_id: str) -> CoordinatorJob:
@@ -203,6 +207,7 @@ class CoordinatorService:
         job.state = JobState.RUNNING
         job.updated_at = int(time.time())
         self._persist_state()
+        self._audit("job_started", job)
         return job
 
     def complete_job(self, job_id: str) -> CoordinatorJob:
@@ -216,6 +221,7 @@ class CoordinatorService:
         self.status.completed_jobs += 1
         self._refresh_status()
         self._persist_state()
+        self._audit("job_completed", job)
         return job
 
     def fail_job(self, job_id: str, error: str) -> CoordinatorJob:
@@ -232,6 +238,7 @@ class CoordinatorService:
         self.status.failed_jobs += 1
         self._refresh_status()
         self._persist_state()
+        self._audit("job_failed", job, {"error": error})
         return job
 
     def get_job(self, job_id: str) -> dict:
@@ -733,6 +740,7 @@ class CoordinatorService:
         job.updated_at = int(time.time())
         self._refresh_status()
         self._persist_state()
+        self._audit("job_prepared", job)
         return job
 
     def _submit_prepared_job(self, job_id: str, package_payload: dict) -> CoordinatorJob:
@@ -778,6 +786,7 @@ class CoordinatorService:
         job.updated_at = int(time.time())
         self._refresh_status()
         self._persist_state()
+        self._audit("destination_submission_broadcast", job, {"tx_hash": job.tx_hash})
         return job
 
     def _wait_for_job_receipt(
@@ -794,8 +803,10 @@ class CoordinatorService:
             if receipt is not None:
                 job.metadata["receipt"] = receipt
                 if int(receipt["status"]) == 1:
+                    self._audit("destination_receipt_observed", job, {"receipt": receipt})
                     self.complete_job(job_id)
                 else:
+                    self._audit("destination_receipt_failed", job, {"receipt": receipt})
                     self.fail_job(job_id, f"destination transaction failed: {job.tx_hash}")
                 return self.jobs[job_id]
             time.sleep(poll_interval_seconds)
@@ -1040,6 +1051,15 @@ class CoordinatorService:
         self.status.failed_jobs += 1
         self._refresh_status()
         self._persist_state()
+        self._audit(
+            "job_retry_scheduled",
+            job,
+            {
+                "error_kind": error_kind,
+                "next_retry_at": job.metadata["next_retry_at"],
+                "attempts": job.attempts,
+            },
+        )
         return job
 
     def _classify_submission_error(self, error: Exception) -> tuple[str, bool]:
@@ -1105,3 +1125,21 @@ class CoordinatorService:
             "jobs": [asdict(self.jobs[job_id]) for job_id in self.job_order],
         }
         self.state_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+    def _audit(self, event_type: str, job: CoordinatorJob, extra: dict | None = None) -> None:
+        metadata = {
+            key: value
+            for key, value in job.metadata.items()
+            if key not in {"destination_submitter_secret_ref", "receipt"}
+        }
+        payload = {
+            "job_id": job.job_id,
+            "job_kind": job.job_kind,
+            "state": job.state.value,
+            "attempts": job.attempts,
+            "tx_hash": job.tx_hash,
+            "metadata": metadata,
+        }
+        if extra is not None:
+            payload.update(extra)
+        self.audit_logger.log(event_type, payload)
