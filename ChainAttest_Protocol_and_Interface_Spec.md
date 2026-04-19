@@ -1104,6 +1104,7 @@ The current coordinator is an in-process Python service, not an HTTP server. It 
 - `orchestrate_eval()`
 - `submit_package()`
 - `resume_pending_jobs()`
+- `retry_failed_jobs()`
 
 ### 11.2 Health State
 
@@ -1161,6 +1162,8 @@ Both methods currently delegate to the CLI entrypoint and return:
 - polls `submitted` jobs for receipts and finalizes them when mined
 - retries `failed` jobs whose retry window has elapsed and whose failure kind is marked retryable
 
+`retry_failed_jobs()` is currently an alias for `resume_pending_jobs()` so operators can explicitly trigger retry processing from tooling without having to reason about the internal state machine entrypoint.
+
 ### 11.4 Request Shapes
 
 The coordinator currently materializes these request types:
@@ -1180,6 +1183,19 @@ The current reference implementation stores state in memory:
 
 The current reference implementation also persists this state to a JSON file under `coordinator/state/` by default so submission jobs can survive process restarts.
 
+The current prototype also maintains an append-only JSONL audit log under `coordinator/state/` by default. Typical records include:
+
+- `job_submitted`
+- `job_started`
+- `job_prepared`
+- `destination_submission_broadcast`
+- `destination_receipt_observed`
+- `job_retry_scheduled`
+- `job_completed`
+- `job_failed`
+
+State snapshots are written atomically and audit records are appended behind a lightweight file lock so local restart recovery does not depend on partially-written JSON files.
+
 Persisted submission jobs must store secret references rather than raw private keys. The current prototype supports:
 
 - in-memory secret refs for same-process continuation
@@ -1193,9 +1209,31 @@ The current prototype also supports command-backed boundaries for:
 
 When a command-backed boundary is used, the coordinator should pass only structured request payloads and environment-backed secret names, not raw private keys.
 
-This is sufficient for local orchestration and restart recovery, but not for secure key isolation, durable multi-writer coordination, or multi-worker deployment.
+The reference signer host currently supports optional request authentication and policy guardrails through environment configuration, including:
 
-### 11.6 Future Service API
+- `CHAINATTEST_SIGNER_AUTH_TOKEN`
+- `CHAINATTEST_SIGNER_ALLOWED_ACTIONS`
+- `CHAINATTEST_SIGNER_ALLOWED_VERIFIERS`
+- `CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS`
+- `CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS`
+- `CHAINATTEST_SIGNER_AUDIT_LOG`
+
+This is sufficient for local orchestration, restart recovery, and basic signer-boundary enforcement, but not for secure key isolation, durable multi-writer coordination, or multi-worker deployment.
+
+### 11.6 Operator Commands
+
+The reference implementation also includes an operator CLI at `coordinator/chainattest_coordinator/ops.py` with commands such as:
+
+- `health`
+- `list-jobs`
+- `show-job`
+- `resume`
+- `retry-failed`
+- `tail-audit`
+
+These commands are intended for local inspection and recovery workflows against persisted state and audit files.
+
+### 11.7 Future Service API
 
 A future coordinator service may expose HTTP endpoints such as:
 
@@ -1204,7 +1242,7 @@ A future coordinator service may expose HTTP endpoints such as:
 - `POST /bundles/eval`
 - `GET /jobs/{jobId}`
 
-### 11.7 Job States
+### 11.8 Job States
 
 Current job states:
 
