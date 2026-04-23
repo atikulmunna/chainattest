@@ -10,6 +10,7 @@
   "scripts": {
     "build": "hardhat compile",
     "test": "hardhat test",
+    "repair": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\repair-contracts.ps1",
     "lint": "echo \"Add Solidity linting/tooling here\""
   },
   "devDependencies": {
