@@ -21,6 +21,7 @@ contract ModelRegistry {
     error RandomnessSeedDigestRequired();
     error InvalidTranscriptSampleCount(uint32 transcriptSampleCount);
     error InvalidTranscriptVersion(uint32 transcriptVersion);
+    error InvalidTranscriptSummary(uint32 transcriptSampleCount, uint32 totalCount);
     error EvaluatorPolicyDigestRequired();
     error InvalidEvaluatorPolicyVersion(uint32 evaluatorPolicyVersion);
     error EvalClaimAlreadyExists(uint256 attestationId, bytes32 benchmarkDigest);
@@ -50,6 +51,9 @@ contract ModelRegistry {
         bytes32 randomnessSeedDigest;
         uint32 transcriptSampleCount;
         uint32 transcriptVersion;
+        uint32 correctCount;
+        uint32 incorrectCount;
+        uint32 abstainCount;
         uint256 scoreCommitment;
         uint32 thresholdBps;
         address evaluator;
@@ -140,6 +144,9 @@ contract ModelRegistry {
         bytes32 randomnessSeedDigest,
         uint32 transcriptSampleCount,
         uint32 transcriptVersion,
+        uint32 correctCount,
+        uint32 incorrectCount,
+        uint32 abstainCount,
         uint256 scoreCommitment,
         uint32 thresholdBps,
         address evaluator,
@@ -158,6 +165,8 @@ contract ModelRegistry {
         if (randomnessSeedDigest == bytes32(0)) revert RandomnessSeedDigestRequired();
         if (transcriptSampleCount == 0) revert InvalidTranscriptSampleCount(transcriptSampleCount);
         if (transcriptVersion == 0) revert InvalidTranscriptVersion(transcriptVersion);
+        uint32 totalCount = correctCount + incorrectCount + abstainCount;
+        if (totalCount != transcriptSampleCount) revert InvalidTranscriptSummary(transcriptSampleCount, totalCount);
         if (scoreCommitment == 0) revert ScoreCommitmentRequired();
         if (thresholdBps > 10_000) revert InvalidThresholdBps(thresholdBps);
         if (evaluator == address(0)) revert EvaluatorRequired();
@@ -177,6 +186,9 @@ contract ModelRegistry {
             randomnessSeedDigest: randomnessSeedDigest,
             transcriptSampleCount: transcriptSampleCount,
             transcriptVersion: transcriptVersion,
+            correctCount: correctCount,
+            incorrectCount: incorrectCount,
+            abstainCount: abstainCount,
             scoreCommitment: scoreCommitment,
             thresholdBps: thresholdBps,
             evaluator: evaluator,

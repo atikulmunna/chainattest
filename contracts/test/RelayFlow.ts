@@ -78,6 +78,9 @@ function evalPackageType() {
     bytes32 randomnessSeedDigest,
     uint32 transcriptSampleCount,
     uint32 transcriptVersion,
+    uint32 correctCount,
+    uint32 incorrectCount,
+    uint32 abstainCount,
     uint256 scoreCommitment,
     uint32 thresholdBps,
     address evaluator,
@@ -106,11 +109,14 @@ function computeTranscriptDigest(
   inferenceConfigDigest: string,
   randomnessSeedDigest: string,
   transcriptSampleCount: number,
-  transcriptVersion: number
+  transcriptVersion: number,
+  correctCount: number,
+  incorrectCount: number,
+  abstainCount: number
 ): string {
   return ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "bytes32", "bytes32", "bytes32", "bytes32", "uint32", "uint32"],
+      ["uint256", "bytes32", "bytes32", "bytes32", "bytes32", "uint32", "uint32", "uint32", "uint32", "uint32"],
       [
         attestationId,
         benchmarkDigest,
@@ -118,7 +124,10 @@ function computeTranscriptDigest(
         inferenceConfigDigest,
         randomnessSeedDigest,
         transcriptSampleCount,
-        transcriptVersion
+        transcriptVersion,
+        correctCount,
+        incorrectCount,
+        abstainCount
       ]
     )
   );
@@ -179,6 +188,9 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
       { name: "randomnessSeedDigest", type: "bytes32" },
       { name: "transcriptSampleCount", type: "uint32" },
       { name: "transcriptVersion", type: "uint32" },
+      { name: "correctCount", type: "uint32" },
+      { name: "incorrectCount", type: "uint32" },
+      { name: "abstainCount", type: "uint32" },
       { name: "scoreCommitment", type: "uint256" },
       { name: "thresholdBps", type: "uint32" },
       { name: "evaluator", type: "address" },
@@ -200,6 +212,9 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
     randomnessSeedDigest: pkg.randomnessSeedDigest,
     transcriptSampleCount: pkg.transcriptSampleCount,
     transcriptVersion: pkg.transcriptVersion,
+    correctCount: pkg.correctCount,
+    incorrectCount: pkg.incorrectCount,
+    abstainCount: pkg.abstainCount,
     scoreCommitment: pkg.scoreCommitment,
     thresholdBps: pkg.thresholdBps,
     evaluator: pkg.evaluator,
@@ -316,8 +331,11 @@ describe("RelayFlow", function () {
     const datasetSplitDigest = ethers.keccak256(ethers.toUtf8Bytes("dataset-split"));
     const inferenceConfigDigest = ethers.keccak256(ethers.toUtf8Bytes("inference-config"));
     const randomnessSeedDigest = ethers.keccak256(ethers.toUtf8Bytes("randomness-seed"));
-    const transcriptSampleCount = 128;
-    const transcriptVersion = 1;
+    const transcriptSampleCount = 100;
+    const transcriptVersion = 2;
+    const correctCount = 92;
+    const incorrectCount = 8;
+    const abstainCount = 0;
     const evalTranscriptDigest = computeTranscriptDigest(
       42n,
       benchmarkDigest,
@@ -325,7 +343,10 @@ describe("RelayFlow", function () {
       inferenceConfigDigest,
       randomnessSeedDigest,
       transcriptSampleCount,
-      transcriptVersion
+      transcriptVersion,
+      correctCount,
+      incorrectCount,
+      abstainCount
     );
     const evaluatorSigner = options.evaluatorSigner ?? signer3;
     const pkg: any = {
@@ -343,6 +364,9 @@ describe("RelayFlow", function () {
       randomnessSeedDigest,
       transcriptSampleCount,
       transcriptVersion,
+      correctCount,
+      incorrectCount,
+      abstainCount,
       scoreCommitment: evalSignals[3],
       thresholdBps: Number(evalSignals[4]),
       evaluator: await evaluatorSigner.getAddress(),
@@ -457,7 +481,7 @@ describe("RelayFlow", function () {
 
     const evalPkg = await buildSignedEvalPackage(fixture, {
       packageOverrides: {
-        transcriptSampleCount: 256
+        evalTranscriptDigest: ethers.keccak256(ethers.toUtf8Bytes("tampered-transcript"))
       }
     });
     const evalEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalPkg]);

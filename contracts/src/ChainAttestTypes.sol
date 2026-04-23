@@ -62,6 +62,9 @@ library ChainAttestTypes {
         bytes32 randomnessSeedDigest;
         uint32 transcriptSampleCount;
         uint32 transcriptVersion;
+        uint32 correctCount;
+        uint32 incorrectCount;
+        uint32 abstainCount;
         uint256 scoreCommitment;
         uint32 thresholdBps;
         address evaluator;

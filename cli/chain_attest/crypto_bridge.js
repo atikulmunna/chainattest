@@ -29,6 +29,9 @@ const EVAL_CLAIM_ATTESTATION_TYPES = {
     { name: "randomnessSeedDigest", type: "bytes32" },
     { name: "transcriptSampleCount", type: "uint32" },
     { name: "transcriptVersion", type: "uint32" },
+    { name: "correctCount", type: "uint32" },
+    { name: "incorrectCount", type: "uint32" },
+    { name: "abstainCount", type: "uint32" },
     { name: "scoreCommitment", type: "uint256" },
     { name: "thresholdBps", type: "uint32" },
     { name: "evaluator", type: "address" },
@@ -89,6 +92,9 @@ function evalPackageType() {
     bytes32 randomnessSeedDigest,
     uint32 transcriptSampleCount,
     uint32 transcriptVersion,
+    uint32 correctCount,
+    uint32 incorrectCount,
+    uint32 abstainCount,
     uint256 scoreCommitment,
     uint32 thresholdBps,
     address evaluator,
@@ -252,7 +258,7 @@ async function main() {
   if (payload.action === "transcript_digest") {
     const digest = ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(
-        ["uint256", "bytes32", "bytes32", "bytes32", "bytes32", "uint32", "uint32"],
+        ["uint256", "bytes32", "bytes32", "bytes32", "bytes32", "uint32", "uint32", "uint32", "uint32", "uint32"],
         [
           BigInt(payload.attestationId),
           payload.benchmarkDigest,
@@ -261,6 +267,9 @@ async function main() {
           payload.randomnessSeedDigest,
           Number(payload.transcriptSampleCount),
           Number(payload.transcriptVersion),
+          Number(payload.correctCount),
+          Number(payload.incorrectCount),
+          Number(payload.abstainCount),
         ]
       )
     );
@@ -268,16 +277,41 @@ async function main() {
     return;
   }
 
+  if (payload.action === "eval_score_from_counts") {
+    const sampleCount = BigInt(payload.transcriptSampleCount);
+    const correctCount = BigInt(payload.correctCount);
+    if (sampleCount === 0n) {
+      throw new Error("transcriptSampleCount must be greater than zero");
+    }
+    const exactScore = (correctCount * 10000n) / sampleCount;
+    if (exactScore * sampleCount !== correctCount * 10000n) {
+      throw new Error("correctCount / transcriptSampleCount does not resolve to an exact basis-point score");
+    }
+    process.stdout.write(JSON.stringify({ exactScore: exactScore.toString() }));
+    return;
+  }
+
   if (payload.action === "eval_witness") {
     const poseidon = await circomlibjs.buildPoseidon();
     const benchmarkField = BigInt(fieldFromHex(payload.benchmarkDigest));
     const evalTranscriptField = BigInt(fieldFromHex(payload.evalTranscriptDigest));
+    const exactScore = BigInt(payload.exactScore);
+    const transcriptSampleCount = BigInt(payload.transcriptSampleCount);
+    const correctCount = BigInt(payload.correctCount);
+    const incorrectCount = BigInt(payload.incorrectCount);
+    const abstainCount = BigInt(payload.abstainCount);
+    if (correctCount + incorrectCount + abstainCount !== transcriptSampleCount) {
+      throw new Error("transcript summary counts must sum to transcriptSampleCount");
+    }
+    if (exactScore * transcriptSampleCount !== correctCount * 10000n) {
+      throw new Error("exactScore does not match correctCount / transcriptSampleCount");
+    }
     const scoreCommitment = poseidon.F.toString(
       poseidon([
         BigInt(payload.attestationId),
         benchmarkField,
         evalTranscriptField,
-        BigInt(payload.exactScore),
+        exactScore,
         BigInt(payload.salt),
       ])
     );
@@ -285,6 +319,7 @@ async function main() {
       JSON.stringify({
         benchmarkField: benchmarkField.toString(),
         evalTranscriptField: evalTranscriptField.toString(),
+        exactScore: exactScore.toString(),
         scoreCommitment,
       })
     );
@@ -354,6 +389,9 @@ async function main() {
       randomnessSeedDigest: pkg.randomnessSeedDigest,
       transcriptSampleCount: Number(pkg.transcriptSampleCount),
       transcriptVersion: Number(pkg.transcriptVersion),
+      correctCount: Number(pkg.correctCount),
+      incorrectCount: Number(pkg.incorrectCount),
+      abstainCount: Number(pkg.abstainCount),
       scoreCommitment: BigInt(pkg.scoreCommitment),
       thresholdBps: Number(pkg.thresholdBps),
       evaluator: pkg.evaluator,

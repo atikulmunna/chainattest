@@ -28,8 +28,11 @@ describe("ModelRegistry", function () {
       datasetSplitDigest: ethers.keccak256(ethers.toUtf8Bytes("dataset-split")),
       inferenceConfigDigest: ethers.keccak256(ethers.toUtf8Bytes("inference-config")),
       randomnessSeedDigest: ethers.keccak256(ethers.toUtf8Bytes("randomness-seed")),
-      transcriptSampleCount: 128,
-      transcriptVersion: 1,
+      transcriptSampleCount: 100,
+      transcriptVersion: 2,
+      correctCount: 92,
+      incorrectCount: 8,
+      abstainCount: 0,
       scoreCommitment: 9999n,
       thresholdBps: 9000,
       evaluator: evaluatorAddress,
@@ -115,6 +118,9 @@ describe("ModelRegistry", function () {
       evalInput.randomnessSeedDigest,
       evalInput.transcriptSampleCount,
       evalInput.transcriptVersion,
+      evalInput.correctCount,
+      evalInput.incorrectCount,
+      evalInput.abstainCount,
       evalInput.scoreCommitment,
       evalInput.thresholdBps,
       evalInput.evaluator,
@@ -133,6 +139,9 @@ describe("ModelRegistry", function () {
         evalInput.randomnessSeedDigest,
         evalInput.transcriptSampleCount,
         evalInput.transcriptVersion,
+        evalInput.correctCount,
+        evalInput.incorrectCount,
+        evalInput.abstainCount,
         evalInput.scoreCommitment,
         evalInput.thresholdBps,
         evalInput.evaluator,
@@ -166,6 +175,9 @@ describe("ModelRegistry", function () {
         evalInput.randomnessSeedDigest,
         evalInput.transcriptSampleCount,
         evalInput.transcriptVersion,
+        evalInput.correctCount,
+        evalInput.incorrectCount,
+        evalInput.abstainCount,
         evalInput.scoreCommitment,
         evalInput.thresholdBps,
         evalInput.evaluator,
@@ -192,6 +204,9 @@ describe("ModelRegistry", function () {
     expect(stored.randomnessSeedDigest).to.equal(evalInput.randomnessSeedDigest);
     expect(stored.transcriptSampleCount).to.equal(evalInput.transcriptSampleCount);
     expect(stored.transcriptVersion).to.equal(evalInput.transcriptVersion);
+    expect(stored.correctCount).to.equal(evalInput.correctCount);
+    expect(stored.incorrectCount).to.equal(evalInput.incorrectCount);
+    expect(stored.abstainCount).to.equal(evalInput.abstainCount);
     expect(stored.evaluator).to.equal(evalInput.evaluator);
     expect(stored.evaluatorPolicyDigest).to.equal(evalInput.evaluatorPolicyDigest);
     expect(stored.evaluatorPolicyVersion).to.equal(evalInput.evaluatorPolicyVersion);
@@ -221,6 +236,9 @@ describe("ModelRegistry", function () {
       evalInput.randomnessSeedDigest,
       evalInput.transcriptSampleCount,
       evalInput.transcriptVersion,
+      evalInput.correctCount,
+      evalInput.incorrectCount,
+      evalInput.abstainCount,
       evalInput.scoreCommitment,
       evalInput.thresholdBps,
       evalInput.evaluator,
