@@ -525,6 +525,8 @@ async function main() {
               hash: receipt.hash,
               blockNumber: receipt.blockNumber,
               status: receipt.status,
+              gasUsed: receipt.gasUsed?.toString(),
+              cumulativeGasUsed: receipt.cumulativeGasUsed?.toString(),
             }
           : null,
       })
