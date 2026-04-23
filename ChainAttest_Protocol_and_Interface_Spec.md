@@ -1171,19 +1171,28 @@ The coordinator currently materializes these request types:
 - `AttestationBundleRequest`
 - `EvalBundleRequest`
 
-These carry the same normalized fields required by the CLI layer, along with optional destination-domain metadata, environment-backed secret references, command-backed signer or submitter hooks, and proof or signature override paths.
+These carry the same normalized fields required by the CLI layer, along with optional destination-domain metadata, environment-backed secret references, HTTP signer-service configuration, command-backed fallback hooks, and proof or signature override paths.
 
 ### 11.5 Current State Model
 
-The current reference implementation stores state in memory:
+The current reference implementation stores active state in memory:
 
 - `jobs` map keyed by `job_id`
 - `job_order` list preserving submission order
 - aggregate `CoordinatorStatus`
 
-The current reference implementation also persists this state to a JSON file under `coordinator/state/` by default so submission jobs can survive process restarts.
+The authoritative persisted state store is now SQLite under `coordinator/state/chainattest.db` by default.
 
-The current prototype also maintains an append-only JSONL audit log under `coordinator/state/` by default. Typical records include:
+Legacy JSON snapshots under `coordinator/state/jobs.json` and JSONL audit logs under `coordinator/state/audit.jsonl` are still written as compatibility shadows and migration inputs, but the database is the primary recovery source.
+
+The persisted coordinator schema includes:
+
+- `jobs`
+- `job_events`
+- `submission_attempts`
+- `nonces`
+
+Typical persisted event records include:
 
 - `job_submitted`
 - `job_started`
@@ -1194,31 +1203,37 @@ The current prototype also maintains an append-only JSONL audit log under `coord
 - `job_completed`
 - `job_failed`
 
-State snapshots are written atomically and audit records are appended behind a lightweight file lock so local restart recovery does not depend on partially-written JSON files.
+SQLite-backed state is complemented by atomic JSON shadow snapshots and append-only audit logs so the prototype remains easy to inspect locally while still supporting restart recovery from the database.
 
 Persisted submission jobs must store secret references rather than raw private keys. The current prototype supports:
 
 - in-memory secret refs for same-process continuation
 - environment-variable secret refs for restart-safe continuation
 
-The current prototype also supports command-backed boundaries for:
+The preferred signer boundary is now a local HTTP signer service that exposes:
+
+- `GET /health`
+- `POST /approve`
+- `POST /sign-eval`
+- `POST /submit`
+
+This service enforces:
+
+- bearer-token authentication
+- request timestamp and nonce headers
+- replay-window checks
+- JSON policy allowlists
+- signer-side audit logging
+
+The current prototype also supports command-backed boundaries as a fallback for:
 
 - committee approval signing
 - evaluator attestation signing
 - destination transaction submission
 
-When a command-backed boundary is used, the coordinator should pass only structured request payloads and environment-backed secret names, not raw private keys.
+When either the HTTP signer service or the command-backed fallback is used, the coordinator should pass only structured request payloads and environment-backed secret names, not raw private keys.
 
-The reference signer host currently supports optional request authentication and policy guardrails through environment configuration, including:
-
-- `CHAINATTEST_SIGNER_AUTH_TOKEN`
-- `CHAINATTEST_SIGNER_ALLOWED_ACTIONS`
-- `CHAINATTEST_SIGNER_ALLOWED_VERIFIERS`
-- `CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS`
-- `CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS`
-- `CHAINATTEST_SIGNER_AUDIT_LOG`
-
-This is sufficient for local orchestration, restart recovery, and basic signer-boundary enforcement, but not for secure key isolation, durable multi-writer coordination, or multi-worker deployment.
+This is sufficient for local orchestration, restart recovery, and boundary enforcement in an academic demo setting, but not for secure key isolation, durable multi-writer coordination, or multi-worker deployment.
 
 ### 11.6 Operator Commands
 
@@ -1231,9 +1246,23 @@ The reference implementation also includes an operator CLI at `coordinator/chain
 - `retry-failed`
 - `tail-audit`
 
-These commands are intended for local inspection and recovery workflows against persisted state and audit files.
+These commands are intended for local inspection and recovery workflows against the SQLite coordinator store, with legacy JSON and JSONL files remaining available as compatibility outputs.
 
-### 11.7 Future Service API
+### 11.7 Demo Automation
+
+The reference implementation includes a reproducible local demo runner at `scripts/run_demo.py`.
+
+The demo runner can:
+
+- start or reuse a Hardhat node
+- start or reuse the HTTP signer service
+- deploy the destination verifier fixture
+- prepare and submit an attestation package
+- prepare and submit an eval package
+- confirm destination verification
+- write benchmark and artifact outputs under `artifacts/demo/`
+
+### 11.8 Future Service API
 
 A future coordinator service may expose HTTP endpoints such as:
 
@@ -1242,7 +1271,7 @@ A future coordinator service may expose HTTP endpoints such as:
 - `POST /bundles/eval`
 - `GET /jobs/{jobId}`
 
-### 11.8 Job States
+### 11.9 Job States
 
 Current job states:
 
