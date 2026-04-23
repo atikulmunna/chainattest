@@ -1,0 +1,8 @@
+flowchart LR
+    A["Source Registry"] --> B["Coordinator"]
+    B --> C["Groth16 Proof Generation"]
+    B --> D["Committee / Evaluator Signer Service"]
+    C --> E["Typed Relay Package"]
+    D --> E
+    E --> F["Destination Verifiers"]
+    F --> G["Public Verification Record"]

@@ -1,0 +1,8 @@
+flowchart LR
+    A["Start Hardhat / Reuse RPC"] --> B["Deploy Destination Fixture"]
+    B --> C["Start HTTP Signer / Reuse Service"]
+    C --> D["Prepare Attestation Bundle"]
+    D --> E["Submit Attestation"]
+    E --> F["Prepare Eval Bundle"]
+    F --> G["Submit Eval"]
+    G --> H["Write Demo Summary + Benchmarks"]
