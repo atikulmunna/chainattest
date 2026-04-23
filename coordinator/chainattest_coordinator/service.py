@@ -19,6 +19,7 @@ from committee.signer_service.signer import (
     CommandSubmissionRequest,
     CommitteeSigner,
     EvalAttestationRequest,
+    HttpSignerClient,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -77,6 +78,8 @@ class AttestationBundleRequest:
     destination_rpc_url: str | None = None
     destination_submitter_private_key: str | None = None
     destination_submitter_key_env: str | None = None
+    signer_service_url: str | None = None
+    signer_service_token_env: str | None = None
     destination_submitter_command: list[str] = field(default_factory=list)
     destination_submitter_auth_token_env: str | None = None
     destination_verifier_address: str | None = None
@@ -121,6 +124,8 @@ class EvalBundleRequest:
     destination_rpc_url: str | None = None
     destination_submitter_private_key: str | None = None
     destination_submitter_key_env: str | None = None
+    signer_service_url: str | None = None
+    signer_service_token_env: str | None = None
     destination_submitter_command: list[str] = field(default_factory=list)
     destination_submitter_auth_token_env: str | None = None
     destination_verifier_address: str | None = None
@@ -160,6 +165,8 @@ class SubmissionRequest:
     destination_verifier_address: str
     destination_submitter_private_key: str | None = None
     destination_submitter_secret_ref: str | None = None
+    signer_service_url: str | None = None
+    signer_service_token_env: str | None = None
     destination_submitter_command: list[str] = field(default_factory=list)
     destination_submitter_auth_token_env: str | None = None
     wait_for_receipt: bool = True
@@ -275,6 +282,8 @@ class CoordinatorService:
                     destination_rpc_url=request.destination_rpc_url,
                     destination_verifier_address=request.destination_verifier_address,
                     destination_submitter_secret_ref=submitter_secret_ref,
+                    signer_service_url=request.signer_service_url,
+                    signer_service_token_env=request.signer_service_token_env,
                     destination_submitter_command=request.destination_submitter_command,
                     destination_submitter_auth_token_env=request.destination_submitter_auth_token_env,
                     wait_for_receipt=wait_for_receipt,
@@ -316,6 +325,8 @@ class CoordinatorService:
                     destination_rpc_url=request.destination_rpc_url,
                     destination_verifier_address=request.destination_verifier_address,
                     destination_submitter_secret_ref=submitter_secret_ref,
+                    signer_service_url=request.signer_service_url,
+                    signer_service_token_env=request.signer_service_token_env,
                     destination_submitter_command=request.destination_submitter_command,
                     destination_submitter_auth_token_env=request.destination_submitter_auth_token_env,
                     wait_for_receipt=wait_for_receipt,
@@ -338,6 +349,7 @@ class CoordinatorService:
             self.start_job(job.job_id)
 
         try:
+            self._preflight_signer_service(request.signer_service_url, request.signer_service_token_env)
             package_payload = self._load_json(request.package_path)
             self._mark_prepared(
                 job.job_id,
@@ -346,6 +358,8 @@ class CoordinatorService:
                     "package_kind": request.package_kind,
                     "destination_rpc_url": request.destination_rpc_url,
                     "destination_verifier_address": request.destination_verifier_address,
+                    "signer_service_url": request.signer_service_url,
+                    "signer_service_token_env": request.signer_service_token_env,
                     "destination_submitter_command": request.destination_submitter_command,
                     "destination_submitter_auth_token_env": request.destination_submitter_auth_token_env,
                     "destination_submitter_secret_ref": request.destination_submitter_secret_ref
@@ -436,6 +450,7 @@ class CoordinatorService:
         self.start_job(job.job_id)
 
         try:
+            self._preflight_signer_service(request.signer_service_url, request.signer_service_token_env)
             self._run_cli(
                 "register-attestation",
                 str(request.model_path),
@@ -509,6 +524,8 @@ class CoordinatorService:
                     verifier_address=request.committee_verifier_address,
                     private_keys=request.committee_private_keys,
                     key_envs=request.committee_key_envs,
+                    signer_service_url=request.signer_service_url,
+                    signer_service_token_env=request.signer_service_token_env,
                     signer_command=request.committee_signer_command,
                     signer_auth_token_env=request.committee_signer_auth_token_env,
                     threshold=request.committee_threshold,
@@ -546,6 +563,7 @@ class CoordinatorService:
         self.start_job(job.job_id)
 
         try:
+            self._preflight_signer_service(request.signer_service_url, request.signer_service_token_env)
             self._run_cli(
                 "register-eval-claim",
                 "--attestation-id",
@@ -632,6 +650,8 @@ class CoordinatorService:
                 verifier_address=request.eval_verifier_address,
                 private_key=request.evaluator_private_key,
                 private_key_env=request.evaluator_key_env,
+                signer_service_url=request.signer_service_url,
+                signer_service_token_env=request.signer_service_token_env,
                 signer_command=request.evaluator_signer_command,
                 signer_auth_token_env=request.evaluator_signer_auth_token_env,
                 existing_signature=request.evaluator_signature,
@@ -644,6 +664,8 @@ class CoordinatorService:
                     verifier_address=request.committee_verifier_address,
                     private_keys=request.committee_private_keys,
                     key_envs=request.committee_key_envs,
+                    signer_service_url=request.signer_service_url,
+                    signer_service_token_env=request.signer_service_token_env,
                     signer_command=request.committee_signer_command,
                     signer_auth_token_env=request.committee_signer_auth_token_env,
                     threshold=request.committee_threshold,
@@ -742,6 +764,16 @@ class CoordinatorService:
         )
         return json.loads(result.stdout)
 
+    def _http_signer(self, service_url: str, token_env: str | None) -> HttpSignerClient:
+        return HttpSignerClient(service_url, auth_token_env=token_env)
+
+    def _preflight_signer_service(self, service_url: str | None, token_env: str | None) -> None:
+        if service_url is None:
+            return
+        health = self._http_signer(service_url, token_env).health()
+        if health.get("status") != "ok":
+            raise RuntimeError("signer_health_failed: signer service did not report ok status")
+
     def _optional_path_args(self, flag: str, path: Path | None) -> list[str]:
         if path is None:
             return []
@@ -766,8 +798,23 @@ class CoordinatorService:
     def _submit_prepared_job(self, job_id: str, package_payload: dict) -> CoordinatorJob:
         job = self.jobs[job_id]
         job.attempts += 1
+        signer_service_url = job.metadata.get("signer_service_url")
         submitter_command = job.metadata.get("destination_submitter_command", [])
-        if submitter_command:
+        if signer_service_url:
+            submitter_key_env = self._env_name_from_secret_ref(job.metadata["destination_submitter_secret_ref"])
+            response = self._http_signer(
+                signer_service_url,
+                job.metadata.get("signer_service_token_env"),
+            ).submit_package(
+                CommandSubmissionRequest(
+                    package=package_payload,
+                    package_kind=job.metadata["package_kind"],
+                    destination_rpc_url=job.metadata["destination_rpc_url"],
+                    destination_verifier_address=job.metadata["destination_verifier_address"],
+                    submitter_key_env=submitter_key_env,
+                )
+            )
+        elif submitter_command:
             submitter_key_env = self._env_name_from_secret_ref(job.metadata["destination_submitter_secret_ref"])
             response = CommandSignerClient(
                 submitter_command,
@@ -917,6 +964,8 @@ class CoordinatorService:
         verifier_address: str | None,
         private_keys: list[str],
         key_envs: list[str],
+        signer_service_url: str | None,
+        signer_service_token_env: str | None,
         signer_command: list[str],
         signer_auth_token_env: str | None,
         threshold: int | None,
@@ -927,7 +976,20 @@ class CoordinatorService:
         package_payload = self._load_json(package_path)
         self.status.pending_signature_requests += 1
         try:
-            if signer_command:
+            if signer_service_url:
+                response = self._http_signer(
+                    signer_service_url,
+                    signer_service_token_env,
+                ).approve(
+                    CommandApprovalRequest(
+                        package=package_payload,
+                        destination_chain_id=destination_chain_id,
+                        verifier_address=verifier_address,
+                        committee_key_envs=key_envs,
+                        threshold=threshold,
+                    )
+                )
+            elif signer_command:
                 response = CommandSignerClient(
                     signer_command,
                     auth_token_env=signer_auth_token_env,
@@ -964,6 +1026,8 @@ class CoordinatorService:
         verifier_address: str | None,
         private_key: str | None,
         private_key_env: str | None,
+        signer_service_url: str | None,
+        signer_service_token_env: str | None,
         signer_command: list[str],
         signer_auth_token_env: str | None,
         existing_signature: str,
@@ -974,7 +1038,21 @@ class CoordinatorService:
             return existing_signature
 
         package_payload = self._load_json(package_path)
-        if signer_command:
+        if signer_service_url:
+            if private_key_env is None:
+                raise ValueError("evaluator key env is required when using the signer service")
+            signed = self._http_signer(
+                signer_service_url,
+                signer_service_token_env,
+            ).sign_eval_attestation(
+                CommandEvalAttestationRequest(
+                    package=package_payload,
+                    destination_chain_id=destination_chain_id,
+                    verifier_address=verifier_address,
+                    private_key_env=private_key_env,
+                )
+            )
+        elif signer_command:
             if private_key_env is None:
                 raise ValueError("evaluator key env is required when using an external evaluator signer command")
             signed = CommandSignerClient(
