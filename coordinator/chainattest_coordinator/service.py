@@ -9,6 +9,7 @@ import time
 from uuid import uuid4
 
 from coordinator.chainattest_coordinator.audit import AuditLogger
+from coordinator.chainattest_coordinator.db import CoordinatorDatabase
 from coordinator.chainattest_coordinator.storage import atomic_write_text
 from committee.signer_service.signer import (
     ApprovalRequest,
@@ -170,13 +171,20 @@ class SubmissionRequest:
 
 
 class CoordinatorService:
-    def __init__(self, state_path: Path | None = None, audit_log_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        state_path: Path | None = None,
+        audit_log_path: Path | None = None,
+        db_path: Path | None = None,
+    ) -> None:
         self.state_path = state_path or (REPO_ROOT / "coordinator" / "state" / "jobs.json")
         self.audit_log_path = audit_log_path or (REPO_ROOT / "coordinator" / "state" / "audit.jsonl")
+        self.db_path = db_path or self.state_path.with_name("chainattest.db")
         self.status = CoordinatorStatus()
         self.jobs: dict[str, CoordinatorJob] = {}
         self.job_order: list[str] = []
         self.runtime_secrets: dict[str, str] = {}
+        self.db = CoordinatorDatabase(self.db_path)
         self.audit_logger = AuditLogger(self.audit_log_path)
         self._load_state()
 
@@ -190,38 +198,30 @@ class CoordinatorService:
             job_kind=job_kind,
             input_path=str(input_path),
             output_path=str(output_path) if output_path else None,
+            metadata={"correlation_id": f"corr-{uuid4()}"},
             created_at=now,
             updated_at=now,
         )
         self.jobs[job.job_id] = job
         self.job_order.append(job.job_id)
-        self.status.queue_depth += 1
-        if self.status.status == "idle":
-            self.status.status = "active"
+        self._refresh_status()
         self._persist_state()
         self._audit("job_submitted", job)
         return job
 
     def start_job(self, job_id: str) -> CoordinatorJob:
         job = self.jobs[job_id]
-        if job.state == JobState.QUEUED:
-            self.status.queue_depth -= 1
-            self.status.proof_jobs_in_progress += 1
         job.state = JobState.RUNNING
         job.updated_at = int(time.time())
+        self._refresh_status()
         self._persist_state()
         self._audit("job_started", job)
         return job
 
     def complete_job(self, job_id: str) -> CoordinatorJob:
         job = self.jobs[job_id]
-        if job.state == JobState.RUNNING:
-            self.status.proof_jobs_in_progress -= 1
-        elif job.state == JobState.SUBMITTED:
-            self.status.submitted_jobs -= 1
         job.state = JobState.COMPLETED
         job.updated_at = int(time.time())
-        self.status.completed_jobs += 1
         self._refresh_status()
         self._persist_state()
         self._audit("job_completed", job)
@@ -229,16 +229,9 @@ class CoordinatorService:
 
     def fail_job(self, job_id: str, error: str) -> CoordinatorJob:
         job = self.jobs[job_id]
-        if job.state == JobState.RUNNING:
-            self.status.proof_jobs_in_progress -= 1
-        elif job.state == JobState.SUBMITTED:
-            self.status.submitted_jobs -= 1
-        elif job.state == JobState.QUEUED:
-            self.status.queue_depth -= 1
         job.state = JobState.FAILED
         job.error = error
         job.updated_at = int(time.time())
-        self.status.failed_jobs += 1
         self._refresh_status()
         self._persist_state()
         self._audit("job_failed", job, {"error": error})
@@ -249,6 +242,9 @@ class CoordinatorService:
 
     def list_jobs(self) -> list[dict]:
         return [asdict(self.jobs[job_id]) for job_id in self.job_order]
+
+    def tail_audit_events(self, limit: int = 20, event_type: str | None = None) -> list[dict]:
+        return self.db.tail_events(limit=limit, event_type=event_type)
 
     def orchestrate_attestation(
         self,
@@ -701,14 +697,30 @@ class CoordinatorService:
             raise
 
     def _refresh_status(self) -> None:
-        if (
-            self.status.queue_depth == 0
+        counts = {
+            JobState.QUEUED: 0,
+            JobState.RUNNING: 0,
+            JobState.PREPARED: 0,
+            JobState.SUBMITTED: 0,
+            JobState.COMPLETED: 0,
+            JobState.FAILED: 0,
+        }
+        for job in self.jobs.values():
+            counts[job.state] += 1
+
+        self.status.queue_depth = counts[JobState.QUEUED]
+        self.status.proof_jobs_in_progress = counts[JobState.RUNNING]
+        self.status.pending_signature_requests = 0
+        self.status.submitted_jobs = counts[JobState.SUBMITTED]
+        self.status.completed_jobs = counts[JobState.COMPLETED]
+        self.status.failed_jobs = counts[JobState.FAILED]
+        self.status.status = (
+            "idle"
+            if self.status.queue_depth == 0
             and self.status.proof_jobs_in_progress == 0
             and self.status.submitted_jobs == 0
-        ):
-            self.status.status = "idle"
-        else:
-            self.status.status = "active"
+            else "active"
+        )
 
     def _run_cli(self, *args: str) -> None:
         subprocess.run(
@@ -740,10 +752,11 @@ class CoordinatorService:
 
     def _mark_prepared(self, job_id: str, metadata: dict) -> CoordinatorJob:
         job = self.jobs[job_id]
-        if job.state == JobState.RUNNING:
-            self.status.proof_jobs_in_progress -= 1
         job.state = JobState.PREPARED
-        job.metadata = metadata
+        job.metadata = {
+            **job.metadata,
+            **metadata,
+        }
         job.updated_at = int(time.time())
         self._refresh_status()
         self._persist_state()
@@ -752,10 +765,6 @@ class CoordinatorService:
 
     def _submit_prepared_job(self, job_id: str, package_payload: dict) -> CoordinatorJob:
         job = self.jobs[job_id]
-        if job.state == JobState.RUNNING:
-            self.status.proof_jobs_in_progress -= 1
-        if job.state != JobState.SUBMITTED:
-            self.status.submitted_jobs += 1
         job.attempts += 1
         submitter_command = job.metadata.get("destination_submitter_command", [])
         if submitter_command:
@@ -793,6 +802,15 @@ class CoordinatorService:
         job.updated_at = int(time.time())
         self._refresh_status()
         self._persist_state()
+        self.db.insert_submission_attempt(
+            job_id=job.job_id,
+            attempt_no=job.attempts,
+            tx_hash=job.tx_hash,
+            destination_rpc_url=job.metadata.get("destination_rpc_url"),
+            verifier_address=job.metadata.get("destination_verifier_address"),
+            error_kind=None,
+            correlation_id=job.metadata.get("correlation_id"),
+        )
         self._audit("destination_submission_broadcast", job, {"tx_hash": job.tx_hash})
         return job
 
@@ -1045,19 +1063,23 @@ class CoordinatorService:
 
     def _schedule_retry(self, job_id: str, error: str, error_kind: str, delay_seconds: float) -> CoordinatorJob:
         job = self.jobs[job_id]
-        if job.state == JobState.RUNNING:
-            self.status.proof_jobs_in_progress -= 1
-        elif job.state == JobState.SUBMITTED:
-            self.status.submitted_jobs -= 1
         job.state = JobState.FAILED
         job.error = error
         job.metadata["last_error_kind"] = error_kind
         job.metadata["retryable"] = True
         job.metadata["next_retry_at"] = time.time() + delay_seconds
         job.updated_at = int(time.time())
-        self.status.failed_jobs += 1
         self._refresh_status()
         self._persist_state()
+        self.db.insert_submission_attempt(
+            job_id=job.job_id,
+            attempt_no=job.attempts,
+            tx_hash=job.tx_hash,
+            destination_rpc_url=job.metadata.get("destination_rpc_url"),
+            verifier_address=job.metadata.get("destination_verifier_address"),
+            error_kind=error_kind,
+            correlation_id=job.metadata.get("correlation_id"),
+        )
         self._audit(
             "job_retry_scheduled",
             job,
@@ -1108,27 +1130,32 @@ class CoordinatorService:
         return time.time() >= next_retry_at
 
     def _load_state(self) -> None:
-        if not self.state_path.exists():
-            return
+        self.jobs = {}
+        self.job_order = []
 
-        payload = json.loads(self.state_path.read_text())
-        status_payload = payload.get("status")
-        if status_payload is not None:
-            self.status = CoordinatorStatus(**status_payload)
+        if not self.db.has_jobs():
+            self.db.migrate_legacy_files(self.state_path, self.audit_log_path)
 
-        self.job_order = payload.get("job_order", [])
-        for raw_job in payload.get("jobs", []):
+        raw_jobs = self.db.load_jobs()
+        if not raw_jobs and self.state_path.exists():
+            payload = json.loads(self.state_path.read_text())
+            raw_jobs = payload.get("jobs", [])
+
+        for raw_job in raw_jobs:
             raw_job["state"] = JobState(raw_job["state"])
             job = CoordinatorJob(**raw_job)
             self.jobs[job.job_id] = job
+            self.job_order.append(job.job_id)
 
         self._refresh_status()
 
     def _persist_state(self) -> None:
+        jobs_payload = [asdict(self.jobs[job_id]) for job_id in self.job_order]
+        self.db.upsert_jobs(jobs_payload)
         payload = {
             "status": asdict(self.status),
             "job_order": self.job_order,
-            "jobs": [asdict(self.jobs[job_id]) for job_id in self.job_order],
+            "jobs": jobs_payload,
         }
         atomic_write_text(self.state_path, json.dumps(payload, indent=2) + "\n")
 
@@ -1148,4 +1175,7 @@ class CoordinatorService:
         }
         if extra is not None:
             payload.update(extra)
+        correlation_id = job.metadata.get("correlation_id")
+        payload["correlation_id"] = correlation_id
+        self.db.insert_event(job.job_id, event_type, payload, correlation_id=correlation_id)
         self.audit_logger.log(event_type, payload)
