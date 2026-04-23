@@ -12,8 +12,10 @@ import tempfile
 import time
 import unittest
 from urllib import request as urllib_request
+from urllib import error as urllib_error
 
 from coordinator.chainattest_coordinator.service import AttestationBundleRequest, CoordinatorService, EvalBundleRequest
+from committee.signer_service.signer import HttpSignerClient
 
 
 BN254_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617
@@ -33,6 +35,7 @@ COMMITTEE_ENV_2 = "CHAINATTEST_TEST_COMMITTEE_KEY_2"
 EVALUATOR_ENV = "CHAINATTEST_TEST_EVALUATOR_KEY"
 AUTH_TOKEN_ENV = "CHAINATTEST_TEST_SIGNER_AUTH_TOKEN"
 HOST_COMMAND = [sys.executable, str(REPO_ROOT / "committee" / "signer_service" / "host.py")]
+HTTP_SERVICE_COMMAND = [sys.executable, str(REPO_ROOT / "committee" / "signer_service" / "http_service.py")]
 
 
 def sha256_digest(path: Path) -> str:
@@ -109,6 +112,19 @@ def wait_for_rpc(rpc_url: str, timeout_seconds: float = 20.0) -> None:
     raise TimeoutError(f"hardhat node did not start at {rpc_url}")
 
 
+def wait_for_http_health(base_url: str, timeout_seconds: float = 20.0) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() <= deadline:
+        try:
+            with urllib_request.urlopen(f"{base_url}/health", timeout=1.0) as response:
+                payload = json.loads(response.read().decode())
+                if payload.get("status") == "ok":
+                    return
+        except Exception:
+            time.sleep(0.25)
+    raise TimeoutError(f"http signer service did not start at {base_url}")
+
+
 class DestinationSubmissionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -139,6 +155,7 @@ class DestinationSubmissionTests(unittest.TestCase):
         self.state_path = self.temp_dir / "jobs.json"
         self.audit_log_path = self.temp_dir / "coordinator-audit.jsonl"
         self.signer_audit_log_path = self.temp_dir / "signer-audit.jsonl"
+        self.http_signer_processes: list[subprocess.Popen] = []
         os.environ[SUBMITTER_ENV] = DEPLOYER_PRIVATE_KEY
         os.environ[COMMITTEE_ENV_1] = COMMITTEE_PRIVATE_KEYS[0]
         os.environ[COMMITTEE_ENV_2] = COMMITTEE_PRIVATE_KEYS[1]
@@ -169,6 +186,12 @@ class DestinationSubmissionTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        for process in self.http_signer_processes:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
         os.environ.pop(SUBMITTER_ENV, None)
         os.environ.pop(COMMITTEE_ENV_1, None)
         os.environ.pop(COMMITTEE_ENV_2, None)
@@ -185,6 +208,74 @@ class DestinationSubmissionTests(unittest.TestCase):
         if not path.exists():
             return []
         return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+    def _start_http_signer(self, policy: dict) -> str:
+        policy_path = self.temp_dir / f"signer-policy-{len(self.http_signer_processes)}.json"
+        policy_path.write_text(json.dumps(policy, indent=2) + "\n")
+        port = allocate_port()
+        base_url = f"http://127.0.0.1:{port}"
+        env = os.environ.copy()
+        env["CHAINATTEST_SIGNER_HOST"] = "127.0.0.1"
+        env["CHAINATTEST_SIGNER_PORT"] = str(port)
+        env["CHAINATTEST_SIGNER_AUTH_TOKEN"] = os.environ[AUTH_TOKEN_ENV]
+        env["CHAINATTEST_SIGNER_POLICY_PATH"] = str(policy_path)
+        env["CHAINATTEST_SIGNER_AUDIT_LOG"] = str(self.signer_audit_log_path)
+        process = subprocess.Popen(
+            HTTP_SERVICE_COMMAND,
+            cwd=REPO_ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        self.http_signer_processes.append(process)
+        wait_for_http_health(base_url)
+        return base_url
+
+    def _policy(self) -> dict:
+        submitter_address = wallet_address(DEPLOYER_PRIVATE_KEY)
+        return {
+            "allowed_actions": [
+                "approve",
+                "sign_eval_attestation",
+                "submit_destination_package",
+            ],
+            "allowed_destination_chains": [str(self.fixture["chainId"])],
+            "allowed_verifiers": [
+                self.fixture["committeeAuthAdapter"],
+                self.fixture["semanticVerifier"],
+                self.fixture["evalThresholdVerifier"],
+            ],
+            "allowed_package_kinds": ["attestation", "eval"],
+            "allowed_evaluators": [self.evaluator_address],
+            "allowed_submitters": [submitter_address],
+        }
+
+    def _post_http_signer(
+        self,
+        base_url: str,
+        route: str,
+        payload: dict,
+        *,
+        token: str | None = None,
+        timestamp: int | None = None,
+        nonce: str | None = None,
+    ) -> tuple[int, dict]:
+        request = urllib_request.Request(
+            f"{base_url}{route}",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token or os.environ[AUTH_TOKEN_ENV]}",
+                "X-ChainAttest-Timestamp": str(timestamp or int(time.time())),
+                "X-ChainAttest-Nonce": nonce or "nonce-http-test",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=5.0) as response:
+                return response.status, json.loads(response.read().decode())
+        except urllib_error.HTTPError as error:
+            return error.code, json.loads(error.read().decode())
 
     def _attestation_request(self) -> AttestationBundleRequest:
         model_path = self.temp_dir / "model.bin"
@@ -410,6 +501,94 @@ class DestinationSubmissionTests(unittest.TestCase):
         self.assertIn("approve", completed_actions)
         self.assertIn("sign_eval_attestation", completed_actions)
         self.assertIn("submit_destination_package", completed_actions)
+
+    def test_http_signer_service_handles_committee_evaluator_and_submitter(self) -> None:
+        service_url = self._start_http_signer(self._policy())
+
+        attestation_request = self._attestation_request()
+        attestation_request.destination_submitter_private_key = None
+        attestation_request.destination_submitter_key_env = SUBMITTER_ENV
+        attestation_request.signer_service_url = service_url
+        attestation_request.signer_service_token_env = AUTH_TOKEN_ENV
+        attestation_request.committee_private_keys = []
+        attestation_request.committee_key_envs = [COMMITTEE_ENV_1, COMMITTEE_ENV_2]
+
+        attestation_result = self.service.orchestrate_attestation(attestation_request)
+        self.assertEqual(attestation_result["submission"]["state"], "completed")
+
+        eval_request = self._eval_request()
+        eval_request.destination_submitter_private_key = None
+        eval_request.destination_submitter_key_env = SUBMITTER_ENV
+        eval_request.signer_service_url = service_url
+        eval_request.signer_service_token_env = AUTH_TOKEN_ENV
+        eval_request.committee_private_keys = []
+        eval_request.committee_key_envs = [COMMITTEE_ENV_1, COMMITTEE_ENV_2]
+        eval_request.evaluator_private_key = None
+        eval_request.evaluator_key_env = EVALUATOR_ENV
+
+        eval_result = self.service.orchestrate_eval(eval_request)
+        self.assertEqual(eval_result["submission"]["state"], "completed")
+
+        signer_events = self._read_audit_log(self.signer_audit_log_path)
+        completed_actions = {
+            event["action"]
+            for event in signer_events
+            if event["event_type"] == "signer_http_request_completed"
+        }
+        self.assertIn("approve", completed_actions)
+        self.assertIn("sign_eval_attestation", completed_actions)
+        self.assertIn("submit_destination_package", completed_actions)
+
+    def test_http_signer_service_rejects_bad_token(self) -> None:
+        service_url = self._start_http_signer(self._policy())
+        os.environ["CHAINATTEST_TEST_BAD_SIGNER_TOKEN"] = "wrong-token"
+        self.addCleanup(lambda: os.environ.pop("CHAINATTEST_TEST_BAD_SIGNER_TOKEN", None))
+
+        request = self._attestation_request()
+        request.destination_submitter_private_key = None
+        request.destination_submitter_key_env = SUBMITTER_ENV
+        request.signer_service_url = service_url
+        request.signer_service_token_env = "CHAINATTEST_TEST_BAD_SIGNER_TOKEN"
+        request.committee_private_keys = []
+        request.committee_key_envs = [COMMITTEE_ENV_1, COMMITTEE_ENV_2]
+
+        with self.assertRaisesRegex(RuntimeError, "auth_failed"):
+            self.service.prepare_attestation_bundle(request)
+
+    def test_http_signer_service_rejects_replayed_nonce(self) -> None:
+        service_url = self._start_http_signer(self._policy())
+
+        request = self._attestation_request()
+        request.destination_chain_id = None
+        request.committee_verifier_address = None
+        request.committee_private_keys = COMMITTEE_PRIVATE_KEYS
+        bundle = self.service.prepare_attestation_bundle(request)
+        package = json.loads(Path(bundle["package_path"]).read_text())
+        payload = {
+            "destinationChainId": int(self.fixture["chainId"]),
+            "verifierAddress": self.fixture["committeeAuthAdapter"],
+            "committeeKeyEnvs": [COMMITTEE_ENV_1, COMMITTEE_ENV_2],
+            "threshold": 2,
+            "package": package,
+        }
+
+        status, response = self._post_http_signer(
+            service_url,
+            "/approve",
+            payload,
+            nonce="replay-nonce",
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("signatures", response)
+
+        replay_status, replay_response = self._post_http_signer(
+            service_url,
+            "/approve",
+            payload,
+            nonce="replay-nonce",
+        )
+        self.assertEqual(replay_status, 409)
+        self.assertEqual(replay_response["error"]["code"], "replay_rejected")
 
     def test_external_signer_policy_rejects_disallowed_action(self) -> None:
         os.environ["CHAINATTEST_SIGNER_ALLOWED_ACTIONS"] = "approve,sign_eval_attestation"
