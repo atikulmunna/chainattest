@@ -1,258 +1,272 @@
 # ChainAttest
 
-ChainAttest is a research-oriented protocol and reference implementation for cross-chain machine learning attestations.
+ChainAttest is a research-first protocol and reference implementation for carrying machine-learning attestations across chains as typed evidence rather than as assets.
 
-Instead of moving assets, ChainAttest moves structured AI evidence: model identity, dataset and training commitments, deployment metadata, and privacy-preserving evaluation claims. The project combines typed relay packages, threshold committee attestations, evaluator statements, and zero-knowledge verification so an attestation created on one chain can be verified and consumed on another without turning the destination verifier into a blind trust sink.
+The project focuses on a specific cross-chain problem that ordinary bridges do not solve well: proving and transporting structured AI provenance and evaluation claims such as model identity, dataset commitments, training commitments, and thresholded evaluation results. The implementation combines committee-authenticated source records, ML-specific Groth16 proofs, evaluator statements, and a Python orchestration layer that can build, sign, submit, recover, and benchmark the full flow end to end.
 
-## Why This Project Exists
+## What This Repository Demonstrates
 
-Most bridge designs are built for token transfers or generic message passing. ChainAttest targets a different payload and a different trust question:
+Today’s prototype is not just a paper scaffold. The repository includes a working EVM-to-EVM pipeline that can:
 
-- the payload is typed ML provenance and evaluation evidence, not fungible assets
-- the proof semantics are ML-specific, not just consensus or message delivery semantics
-- evaluation quality can be attested privately instead of exposing raw scores, datasets, or weights
-- the resulting record can support public auditability and compliance-evidence workflows for AI systems
+- register and track source-side model attestations and evaluation claims
+- generate semantic and evaluation proofs from Circom circuits and Groth16 artifacts
+- assemble typed relay packages for attestation and eval claims
+- collect committee approvals and evaluator signatures
+- verify those packages on destination contracts
+- submit them automatically through a coordinator
+- recover persisted jobs after restart
+- benchmark and package the whole flow into demo artifacts
 
-That makes ChainAttest useful for cases such as:
+## Core Thesis
 
-- anchoring a model registration event from a source chain to a destination verifier
-- proving that a model met a benchmark threshold without publishing the exact score
-- carrying evaluator-approved, policy-bound evaluation claims across domains
-- building public evidence trails for provenance, deployment authorization, and traceability
+ChainAttest is built around five claims:
 
-## Design Summary
+1. The payload is attestation evidence, not assets.
+2. The proof relations are ML-specific, not just consensus- or transfer-specific.
+3. Evaluation claims can be privacy-preserving instead of exposing the raw score.
+4. Cross-chain verification should separate source authenticity from semantic verification.
+5. The resulting destination record can serve as public compliance evidence for provenance and traceability workflows.
 
-ChainAttest currently separates the problem into three layers:
+## Architecture
 
-1. Source authenticity
-   Committee signers attest to a typed source record after a configured finality delay.
-2. Semantic verification
-   Groth16 proofs verify ML-specific attestation or evaluation relations on the destination chain.
-3. Operational orchestration
-   A Python coordinator prepares artifacts, generates proofs, collects signatures, submits destination transactions, and recovers persisted jobs after restart.
+The current design is easiest to understand as four layers.
 
-### Attestation Flow
+### 1. Source-Side Semantics
 
-1. A source-side registry records a model attestation.
-2. The coordinator waits for the required finality window.
-3. A committee signs the typed attestation package.
-4. A semantic Groth16 proof binds the attestation metadata to the committed weights root.
-5. The destination verifier checks the package, committee approvals, and proof.
+`contracts/src/ModelRegistry.sol` records structured model attestations and evaluation claims, including:
 
-### Evaluation Flow
+- model lineage
+- ownership
+- revocation-aware status
+- structured evaluation transcript summaries
 
-1. A verified attestation acts as the parent identity.
-2. The evaluator signs a typed statement over the benchmark and transcript context.
-3. A structured transcript digest is derived from benchmark, split, inference, randomness, and sample-count fields.
-4. A Groth16 proof shows the hidden score meets the declared threshold while staying bound to the attestation and transcript context.
-5. The destination verifier checks committee approvals, evaluator authorization, transcript consistency, and the proof.
+### 2. Source Authenticity
 
-## Current Repository Status
+`CommitteeAuthAdapter` verifies committee approvals over typed source-record packages after a configured finality window. This keeps source-authenticity logic separate from proof semantics.
 
-This repository is no longer only a paper scaffold. The current prototype includes:
+### 3. Destination Semantic Verification
+
+The destination verifier stack checks:
+
+- committee-authenticated attestation packages
+- semantic Groth16 proofs for ML attestation integrity
+- evaluation Groth16 proofs for thresholded private claims
+- evaluator authorization and evaluator-policy metadata
+- structured transcript consistency
+- replay protection and public-signal consistency
+
+### 4. Operational Orchestration
+
+The coordinator prepares bundles, generates proofs, collects signatures, submits packages, persists job state to SQLite, and recovers pending work after restart. The preferred signer boundary is now a local HTTP signer service with bearer-token auth, nonce and timestamp checks, JSON policy controls, and signer-side audit logging.
+
+## Current Feature Set
+
+### Contracts and Proofs
 
 - Solidity contracts for source registration, semantic verification, evaluation verification, and committee authentication
-- generated Groth16 verifier contracts and real proof fixtures
+- generated Groth16 verifier contracts in `contracts/src/generated/`
+- real proof fixtures used by the Hardhat integration tests
 - Circom circuits for semantic attestation and evaluation-threshold proofs
-- a Python CLI for manifest creation, witness preparation, and relay package rendering
-- a coordinator service that prepares bundles, generates proofs, collects signatures, submits packages, and resumes jobs after restart
-- command-backed signer and submitter boundaries so signing and submission can be delegated outside the coordinator process
-- signer-host authentication and policy checks
-- coordinator and signer audit logs
-- retryable submission failures with backoff
-- atomic coordinator state persistence and persisted restart recovery
-- operator commands for inspecting jobs and audit history
-- GitHub Actions validation for contracts, Python tooling, and operator entrypoints
 
-## Repository Structure
+### Coordinator and CLI
+
+- CLI commands for manifest creation, witness preparation, and package rendering
+- proof generation through `snarkjs`
+- committee approval collection
+- evaluator signature collection
+- destination transaction submission
+- persisted restart recovery and retry scheduling
+- SQLite-backed job and audit storage with migration from legacy JSON artifacts
+
+### Signer Boundary
+
+- preferred HTTP signer service in `committee/signer_service/http_service.py`
+- command-backed signer host in `committee/signer_service/host.py` as a fallback/debug path
+- bearer-token auth for the HTTP service
+- request timestamp and nonce enforcement with replay-window checks
+- signer policy loaded from JSON
+- signer-side audit logging
+
+### Demo and Benchmark Packaging
+
+- one-command local demo runner in `scripts/run_demo.py`
+- artifact bundle generation under `artifacts/demo/`
+- machine-readable benchmark summary
+- markdown benchmark table
+- demo runbook and paper-support docs under `docs/`
+
+## Repository Map
 
 | Path | Purpose |
 | --- | --- |
-| `SRS_ChainAttest_Revised.md` | Revised system requirements and research framing |
-| `ChainAttest_Protocol_and_Interface_Spec.md` | Builder-facing protocol, interface, and package specification |
-| `contracts/` | Solidity contracts, generated verifiers, deployment helpers, and Hardhat tests |
-| `circuits/` | Circom circuits, proving artifacts, and verifier-generation inputs |
-| `cli/` | Python CLI for manifests, witness inputs, and relay package rendering |
-| `coordinator/` | Coordinator service, audit utilities, persistence helpers, and operator commands |
-| `committee/` | Committee and evaluator signing helpers plus a local signer-host boundary |
-| `schemas/` | JSON schemas for structured attestation and evaluation inputs |
-| `tests/` | Python orchestration, recovery, and operator-tooling tests |
+| `SRS_ChainAttest_Revised.md` | Revised SRS and research framing |
+| `ChainAttest_Protocol_and_Interface_Spec.md` | Protocol, package, and interface specification |
+| `contracts/` | Solidity contracts, generated verifiers, and Hardhat tests |
+| `circuits/` | Circom circuits and proving artifacts |
+| `cli/` | Python CLI for manifests, witness inputs, and package rendering |
+| `coordinator/` | Coordinator service, SQLite storage, audit helpers, and operator commands |
+| `committee/` | HTTP signer service, command fallback host, and signer clients |
+| `schemas/` | JSON schemas for structured attestation and eval inputs |
+| `tests/` | Python orchestration, persistence, signer-boundary, and operator tests |
+| `docs/demo/` | Demo runbook, expected outputs, and troubleshooting |
+| `docs/paper/` | Thesis framing, evaluation notes, related-work outline, and threat model |
+| `docs/figures/` | Source-controlled Mermaid figure files |
+| `scripts/run_demo.py` | Reproducible local demo and benchmark runner |
 
-## Implemented Capabilities
+## Runtime Baseline
 
-### Destination Verification
-
-- committee-backed source package authentication
-- semantic attestation verification with generated Groth16 verifier integration
-- evaluation-threshold verification with generated Groth16 verifier integration
-- replay protection and public-input consistency checks
-- evaluator authorization and EIP-712 evaluator statements
-- structured transcript digest enforcement
-- evaluator policy digest and policy-version checks
-
-### Coordinator Orchestration
-
-- attestation and evaluation bundle preparation
-- witness generation and `snarkjs` proof generation
-- committee-signature collection
-- evaluator-signature collection
-- destination transaction submission
-- persisted job state and restart recovery
-- retry scheduling for retryable submission failures
-- atomic state snapshots and append-only audit logging
-
-### Operational Hardening
-
-- secret references instead of persisting raw submitter keys
-- environment-backed and in-memory secret reference handling
-- external command-backed signing and submission boundaries
-- signer-host authentication tokens
-- signer-host policy allowlists for actions, verifiers, package kinds, and destination chains
-- separate coordinator and signer audit logs
-- local operator commands for job inspection, retry, resume, and audit tailing
-
-## Quick Start
-
-### Runtime Baseline
-
-The repository is pinned to the following toolchain baseline:
+The repository is pinned to:
 
 - Node.js `24.15.0`
 - npm `11.12.1`
 - Python `3.11+`
 
-For local setup, the repo includes both `.nvmrc` and `.node-version` with `24.15.0`.
-The root `.npmrc` also enables `engine-strict=true`, so installs fail fast on unsupported Node/npm versions.
+The repo includes `.nvmrc`, `.node-version`, and root `.npmrc` with `engine-strict=true`.
 
-### Contracts
+## Quick Start
+
+### 1. Install Dependencies
 
 ```bash
 nvm use
+npm ci --prefix contracts
+npm ci --prefix circuits
+python -m pip install -e ./cli
+```
+
+### 2. Validate The Main Paths
+
+```bash
 cd contracts
-npm install
 npm run build
 npm test
-```
+cd ..
 
-### Python Tooling
-
-```bash
-nvm use
-python -m compileall cli coordinator committee tests
-python cli/chain_attest/main.py --help
-python coordinator/chainattest_coordinator/ops.py --help
 python -m unittest discover -s tests
+python -m compileall cli coordinator committee tests scripts
+python coordinator/chainattest_coordinator/ops.py --help
 ```
 
-### Windows Install Repair
-
-If `npm ci` or `npm install` in `contracts/` fails on Windows with `EPERM` while unlinking Hardhat native binaries such as `edr.win32-x64-msvc.node`, use the repair helper:
+### 3. Run The Local Demo
 
 ```bash
-cd contracts
-npm run repair
+python scripts/run_demo.py --output-root artifacts/demo
 ```
 
-This helper:
+The demo will:
 
-- stops project-local `node` / `hardhat` processes
-- removes stale temporary npm directories left by failed cleanup
-- reruns `npm install`
+- start or reuse a Hardhat node
+- start or reuse the HTTP signer service
+- deploy the destination fixture
+- prepare and submit an attestation package
+- prepare and submit an eval package
+- confirm destination verification
+- write benchmark and artifact outputs under `artifacts/demo/`
 
-If you only want the cleanup step without reinstalling, run:
+## Demo Outputs
+
+After a successful run, the most important files are:
+
+- `artifacts/demo/demo_summary.json`
+- `artifacts/demo/benchmark_summary.md`
+- `artifacts/demo/attestation/attestation_package.json`
+- `artifacts/demo/eval/eval_package.json`
+- `artifacts/demo/state/chainattest.db`
+- `artifacts/demo/state/audit.jsonl`
+- `artifacts/demo/signer-audit.jsonl`
+
+## Operator Workflows
+
+The operator CLI is database-first now.
+
+Examples:
 
 ```bash
-powershell -ExecutionPolicy Bypass -File .\scripts\repair-contracts.ps1 -SkipInstall
+python coordinator/chainattest_coordinator/ops.py health --db-path coordinator/state/chainattest.db
+python coordinator/chainattest_coordinator/ops.py list-jobs --db-path coordinator/state/chainattest.db
+python coordinator/chainattest_coordinator/ops.py show-job <job-id> --db-path coordinator/state/chainattest.db
+python coordinator/chainattest_coordinator/ops.py resume --db-path coordinator/state/chainattest.db
+python coordinator/chainattest_coordinator/ops.py retry-failed --db-path coordinator/state/chainattest.db
+python coordinator/chainattest_coordinator/ops.py tail-audit --db-path coordinator/state/chainattest.db --limit 25
 ```
 
-## Operator Commands
+Legacy JSON state and JSONL audit files are still written as compatibility shadows, but SQLite is the authoritative store.
 
-The operator CLI is available at `coordinator/chainattest_coordinator/ops.py`.
+## Signer Modes
 
-Common commands:
+### Preferred Mode: HTTP Signer Service
 
-```bash
-python coordinator/chainattest_coordinator/ops.py health --state-path coordinator/state/jobs.json
-python coordinator/chainattest_coordinator/ops.py list-jobs --state-path coordinator/state/jobs.json
-python coordinator/chainattest_coordinator/ops.py show-job <job-id> --state-path coordinator/state/jobs.json
-python coordinator/chainattest_coordinator/ops.py resume --state-path coordinator/state/jobs.json
-python coordinator/chainattest_coordinator/ops.py retry-failed --state-path coordinator/state/jobs.json
-python coordinator/chainattest_coordinator/ops.py tail-audit --audit-log-path coordinator/state/audit.jsonl --limit 25
-```
+The preferred boundary is `committee/signer_service/http_service.py`.
 
-## Signer Boundary
+It provides:
 
-The reference signer host is a local command-backed boundary in `committee/signer_service/host.py`.
+- `GET /health`
+- `POST /approve`
+- `POST /sign-eval`
+- `POST /submit`
 
-It currently supports:
+And enforces:
 
-- committee approval signing
-- evaluator statement signing
-- destination-package submission
-- optional auth token enforcement
-- optional policy allowlists
+- bearer-token auth
+- timestamp and nonce headers
+- replay-window checks
+- JSON policy allowlists
 - signer-side audit logging
 
-Environment variables recognized by the signer host include:
+### Fallback Mode: Command Host
 
-- `CHAINATTEST_SIGNER_AUTH_TOKEN`
-- `CHAINATTEST_SIGNER_ALLOWED_ACTIONS`
-- `CHAINATTEST_SIGNER_ALLOWED_VERIFIERS`
-- `CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS`
-- `CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS`
-- `CHAINATTEST_SIGNER_AUDIT_LOG`
+`committee/signer_service/host.py` remains available as a fallback/debug boundary for local command-backed signing and submission.
 
-## Persistence and Recovery
+## CI
 
-The coordinator persists job state to `coordinator/state/jobs.json` by default and writes an append-only audit trail to `coordinator/state/audit.jsonl`.
+GitHub Actions currently covers:
 
-The current persistence model provides:
-
-- restart recovery for prepared, submitted, and retryable failed jobs
-- atomic state-file replacement
-- locked audit-log appends
-- retry metadata such as error kind, retryability, next retry time, and attempt count
-
-This is good enough for a single-host research prototype, but it is not yet a distributed queue or multi-worker control plane.
-
-## Validation
-
-The repository currently validates through:
-
-- Hardhat contract build and test runs
+- contract build and test
 - Python orchestration and recovery tests
-- operator CLI tests
-- GitHub Actions checks for contracts and Python tooling
+- operator CLI checks
+- a workflow-dispatch demo smoke run that uploads demo artifacts
 
-At the time of the latest local validation, the following commands were expected to pass:
+## Demo And Paper Support Docs
 
-```bash
-cd contracts && npm run build && npm test
-python -m unittest discover -s tests
-python -m compileall cli coordinator committee tests
-```
+### Demo Docs
+
+- `docs/demo/runbook.md`
+- `docs/demo/expected_outputs.md`
+- `docs/demo/troubleshooting.md`
+
+### Paper Docs
+
+- `docs/paper/contributions_and_thesis.md`
+- `docs/paper/evaluation_methodology.md`
+- `docs/paper/related_work_outline.md`
+- `docs/paper/threat_model.md`
+
+### Figure Sources
+
+- `docs/figures/architecture.mmd`
+- `docs/figures/demo_flow.mmd`
 
 ## Known Prototype Limits
 
-ChainAttest is already useful as a serious research prototype, but some boundaries are still intentionally unfinished:
+This is a high-credibility research prototype, not a production launch.
 
-- the evaluator proof is bound to a structured transcript digest, not a fully proved benchmark execution trace
-- the command-backed signer host is a local reference boundary, not a production HSM or managed secret service
-- coordinator persistence is durable for single-host recovery, not yet designed for multi-writer coordination
-- the broader deployment story still needs packaging, infrastructure automation, and production-grade service boundaries
+Important current limits:
 
-## Near-Term Priorities
+- the eval proof is bound to a structured transcript summary, not a fully proved benchmark execution trace
+- the HTTP signer service is still a local reference boundary, not an HSM or managed secret platform
+- SQLite provides strong single-host durability, not multi-writer distributed coordination
+- the heterogeneous permissioned-to-public path remains a roadmap extension, not the MVP delivery target
 
-The highest-value next improvements are:
+## Suggested Next Steps
 
-1. make evaluator transcript semantics richer than the current metadata-level commitment
-2. replace the local signer host with a stronger isolated signer or secret-manager-backed boundary
-3. move coordinator durability from single-host JSON persistence toward a real operational datastore
-4. expand deployment and integration automation around proving artifacts, submission flows, and operator recovery
+The strongest next engineering moves are:
+
+1. make evaluator transcript semantics richer than the current structured summary
+2. replace the local signer reference service with a stronger isolated signer or secret-manager-backed boundary
+3. extend durability and observability for multi-worker coordination
+4. expand benchmark depth and paper-facing evaluation outputs
 
 ## Primary Documents
 
 - [SRS_ChainAttest_Revised.md](SRS_ChainAttest_Revised.md)
 - [ChainAttest_Protocol_and_Interface_Spec.md](ChainAttest_Protocol_and_Interface_Spec.md)
-
-These two files are the best entry points if you want the research framing and the builder-facing protocol details side by side.
