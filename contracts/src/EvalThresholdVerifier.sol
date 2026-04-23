@@ -24,11 +24,12 @@ contract EvalThresholdVerifier is EIP712 {
     error EvaluatorKeyMismatch(bytes32 expected, bytes32 actual);
     error InvalidTranscriptCommitment(bytes32 expected, bytes32 actual);
     error InvalidTranscriptSampleCount(uint32 sampleCount);
+    error InvalidTranscriptSummary(uint32 sampleCount, uint32 totalCount);
     error InvalidEvaluatorPolicyDigest();
     error InvalidEvaluatorPolicyVersion(uint32 policyVersion);
 
     bytes32 public constant EVAL_CLAIM_ATTESTATION_TYPEHASH = keccak256(
-        "EvalClaimAttestation(uint256 sourceChainId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
+        "EvalClaimAttestation(uint256 sourceChainId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint32 correctCount,uint32 incorrectCount,uint32 abstainCount,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
     );
 
     struct VerifiedEvalClaim {
@@ -195,6 +196,9 @@ contract EvalThresholdVerifier is EIP712 {
                 pkg.randomnessSeedDigest,
                 pkg.transcriptSampleCount,
                 pkg.transcriptVersion,
+                pkg.correctCount,
+                pkg.incorrectCount,
+                pkg.abstainCount,
                 pkg.scoreCommitment,
                 pkg.thresholdBps,
                 pkg.evaluator,
@@ -212,6 +216,10 @@ contract EvalThresholdVerifier is EIP712 {
         if (pkg.transcriptSampleCount == 0) {
             revert InvalidTranscriptSampleCount(pkg.transcriptSampleCount);
         }
+        uint32 totalCount = pkg.correctCount + pkg.incorrectCount + pkg.abstainCount;
+        if (totalCount != pkg.transcriptSampleCount) {
+            revert InvalidTranscriptSummary(pkg.transcriptSampleCount, totalCount);
+        }
 
         bytes32 expectedDigest = keccak256(
             abi.encode(
@@ -221,7 +229,10 @@ contract EvalThresholdVerifier is EIP712 {
                 pkg.inferenceConfigDigest,
                 pkg.randomnessSeedDigest,
                 pkg.transcriptSampleCount,
-                pkg.transcriptVersion
+                pkg.transcriptVersion,
+                pkg.correctCount,
+                pkg.incorrectCount,
+                pkg.abstainCount
             )
         );
 

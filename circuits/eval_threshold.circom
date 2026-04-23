@@ -13,6 +13,10 @@ template EvalThresholdV1() {
 
     signal input exact_score;
     signal input salt;
+    signal input transcript_sample_count;
+    signal input correct_count;
+    signal input incorrect_count;
+    signal input abstain_count;
 
     // Bind the private score to the attestation and benchmark context so the proof
     // cannot be replayed as a generic threshold statement.
@@ -34,7 +38,10 @@ template EvalThresholdV1() {
     lte.in[1] <== 10000;
     lte.out === 1;
 
-    circuit_version_id === 1;
+    correct_count + incorrect_count + abstain_count === transcript_sample_count;
+    exact_score * transcript_sample_count === correct_count * 10000;
+
+    circuit_version_id === 2;
 }
 
 component main {public [

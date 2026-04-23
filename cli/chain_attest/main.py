@@ -161,13 +161,18 @@ def register_eval_claim(
     inference_config_digest: str = typer.Option(..., help="0x bytes32 inference config digest"),
     randomness_seed_digest: str = typer.Option(..., help="0x bytes32 randomness seed digest"),
     transcript_sample_count: int = typer.Option(..., help="Structured transcript sample count"),
-    transcript_version: int = typer.Option(1, help="Transcript schema version"),
+    transcript_version: int = typer.Option(2, help="Transcript schema version"),
+    correct_count: int = typer.Option(..., help="Number of correct benchmark results"),
+    incorrect_count: int = typer.Option(..., help="Number of incorrect benchmark results"),
+    abstain_count: int = typer.Option(0, help="Number of abstained benchmark results"),
     threshold_bps: int = typer.Option(..., help="Threshold in basis points"),
     evaluator: str = typer.Option(..., help="Evaluator EVM address"),
     evaluator_policy_digest: str = typer.Option(..., help="0x bytes32 evaluator policy digest"),
     evaluator_policy_version: int = typer.Option(1, help="Evaluator policy version"),
     output: Path = typer.Option(..., help="Output JSON eval manifest path"),
 ) -> None:
+    if correct_count + incorrect_count + abstain_count != transcript_sample_count:
+        raise typer.BadParameter("correct-count + incorrect-count + abstain-count must equal transcript-sample-count")
     transcript = run_bridge(
         {
             "action": "transcript_digest",
@@ -178,6 +183,9 @@ def register_eval_claim(
             "randomnessSeedDigest": randomness_seed_digest,
             "transcriptSampleCount": transcript_sample_count,
             "transcriptVersion": transcript_version,
+            "correctCount": correct_count,
+            "incorrectCount": incorrect_count,
+            "abstainCount": abstain_count,
         }
     )
 
@@ -190,6 +198,9 @@ def register_eval_claim(
         "randomness_seed_digest": randomness_seed_digest,
         "transcript_sample_count": transcript_sample_count,
         "transcript_version": transcript_version,
+        "correct_count": correct_count,
+        "incorrect_count": incorrect_count,
+        "abstain_count": abstain_count,
         "threshold_bps": threshold_bps,
         "evaluator": normalize_address(evaluator),
         "evaluator_key_id": transcript["evaluatorKeyId"] if "evaluatorKeyId" in transcript else None,
@@ -206,18 +217,28 @@ def register_eval_claim(
 @app.command("build-eval-input")
 def build_eval_input(
     manifest: Path = typer.Option(..., help="Eval claim manifest JSON"),
-    exact_score: int = typer.Option(..., help="Exact evaluation score in basis points"),
     salt: int = typer.Option(..., help="Private salt field element"),
     output: Path = typer.Option(..., help="Output eval witness JSON"),
 ) -> None:
     claim = load_json(manifest)
+    score = run_bridge(
+        {
+            "action": "eval_score_from_counts",
+            "transcriptSampleCount": claim["transcript_sample_count"],
+            "correctCount": claim["correct_count"],
+        }
+    )
     witness_data = run_bridge(
         {
             "action": "eval_witness",
             "attestationId": claim["attestation_id"],
             "benchmarkDigest": claim["benchmark_digest"],
             "evalTranscriptDigest": claim["eval_transcript_digest"],
-            "exactScore": str(exact_score),
+            "transcriptSampleCount": claim["transcript_sample_count"],
+            "correctCount": claim["correct_count"],
+            "incorrectCount": claim["incorrect_count"],
+            "abstainCount": claim["abstain_count"],
+            "exactScore": score["exactScore"],
             "salt": str(salt),
         }
     )
@@ -228,8 +249,12 @@ def build_eval_input(
         "eval_transcript_digest_field": witness_data["evalTranscriptField"],
         "score_commitment": witness_data["scoreCommitment"],
         "threshold_bps": str(claim["threshold_bps"]),
-        "circuit_version_id": "1",
-        "exact_score": str(exact_score),
+        "circuit_version_id": "2",
+        "transcript_sample_count": str(claim["transcript_sample_count"]),
+        "correct_count": str(claim["correct_count"]),
+        "incorrect_count": str(claim["incorrect_count"]),
+        "abstain_count": str(claim["abstain_count"]),
+        "exact_score": witness_data["exactScore"],
         "salt": str(salt),
     }
     dump_json(output, witness)
@@ -321,7 +346,7 @@ def render_eval_package(
     claimed_at_block: int = typer.Option(...),
     adapter_id: str = typer.Option(...),
     finality_delay_blocks: int = typer.Option(...),
-    eval_circuit_version: int = typer.Option(1),
+    eval_circuit_version: int = typer.Option(2),
     evaluator_signature: str = typer.Option("0x", help="Optional evaluator signature"),
     proof_file: Path | None = typer.Option(None, help="Optional Groth16 proof JSON"),
     public_signals_file: Path | None = typer.Option(None, help="Optional public signals JSON"),
@@ -349,6 +374,9 @@ def render_eval_package(
         "randomnessSeedDigest": claim["randomness_seed_digest"],
         "transcriptSampleCount": claim["transcript_sample_count"],
         "transcriptVersion": claim["transcript_version"],
+        "correctCount": claim["correct_count"],
+        "incorrectCount": claim["incorrect_count"],
+        "abstainCount": claim["abstain_count"],
         "scoreCommitment": eval_witness["score_commitment"],
         "thresholdBps": claim["threshold_bps"],
         "evaluator": claim["evaluator"],
