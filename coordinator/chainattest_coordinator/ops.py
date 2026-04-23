@@ -19,22 +19,36 @@ def _print_json(payload: object) -> None:
     typer.echo(json.dumps(payload, indent=2))
 
 
+def _service(
+    db_path: Path | None,
+    state_path: Path | None,
+    audit_log_path: Path | None,
+) -> CoordinatorService:
+    return CoordinatorService(
+        state_path=state_path,
+        audit_log_path=audit_log_path,
+        db_path=db_path,
+    )
+
+
 @app.command("health")
 def health(
-    state_path: Path = typer.Option(..., help="Persisted coordinator state file"),
+    db_path: Path | None = typer.Option(None, "--db-path", help="Coordinator SQLite database path"),
+    state_path: Path | None = typer.Option(None, "--state-path", help="Legacy/shadow coordinator state file"),
     audit_log_path: Path | None = typer.Option(None, help="Optional audit log path"),
 ) -> None:
-    service = CoordinatorService(state_path=state_path, audit_log_path=audit_log_path)
+    service = _service(db_path, state_path, audit_log_path)
     _print_json(service.health())
 
 
 @app.command("list-jobs")
 def list_jobs(
-    state_path: Path = typer.Option(..., help="Persisted coordinator state file"),
+    db_path: Path | None = typer.Option(None, "--db-path", help="Coordinator SQLite database path"),
+    state_path: Path | None = typer.Option(None, "--state-path", help="Legacy/shadow coordinator state file"),
     audit_log_path: Path | None = typer.Option(None, help="Optional audit log path"),
     state_filter: str | None = typer.Option(None, "--state", help="Optional job state filter"),
 ) -> None:
-    service = CoordinatorService(state_path=state_path, audit_log_path=audit_log_path)
+    service = _service(db_path, state_path, audit_log_path)
     jobs = service.list_jobs()
     if state_filter is not None:
         jobs = [job for job in jobs if job["state"] == state_filter]
@@ -44,38 +58,48 @@ def list_jobs(
 @app.command("show-job")
 def show_job(
     job_id: str = typer.Argument(..., help="Coordinator job id"),
-    state_path: Path = typer.Option(..., help="Persisted coordinator state file"),
+    db_path: Path | None = typer.Option(None, "--db-path", help="Coordinator SQLite database path"),
+    state_path: Path | None = typer.Option(None, "--state-path", help="Legacy/shadow coordinator state file"),
     audit_log_path: Path | None = typer.Option(None, help="Optional audit log path"),
 ) -> None:
-    service = CoordinatorService(state_path=state_path, audit_log_path=audit_log_path)
+    service = _service(db_path, state_path, audit_log_path)
     _print_json(service.get_job(job_id))
 
 
 @app.command("resume")
 def resume(
-    state_path: Path = typer.Option(..., help="Persisted coordinator state file"),
+    db_path: Path | None = typer.Option(None, "--db-path", help="Coordinator SQLite database path"),
+    state_path: Path | None = typer.Option(None, "--state-path", help="Legacy/shadow coordinator state file"),
     audit_log_path: Path | None = typer.Option(None, help="Optional audit log path"),
 ) -> None:
-    service = CoordinatorService(state_path=state_path, audit_log_path=audit_log_path)
+    service = _service(db_path, state_path, audit_log_path)
     _print_json(service.resume_pending_jobs())
 
 
 @app.command("retry-failed")
 def retry_failed(
-    state_path: Path = typer.Option(..., help="Persisted coordinator state file"),
+    db_path: Path | None = typer.Option(None, "--db-path", help="Coordinator SQLite database path"),
+    state_path: Path | None = typer.Option(None, "--state-path", help="Legacy/shadow coordinator state file"),
     audit_log_path: Path | None = typer.Option(None, help="Optional audit log path"),
 ) -> None:
-    service = CoordinatorService(state_path=state_path, audit_log_path=audit_log_path)
+    service = _service(db_path, state_path, audit_log_path)
     _print_json(service.retry_failed_jobs())
 
 
 @app.command("tail-audit")
 def tail_audit(
-    audit_log_path: Path = typer.Option(..., help="Coordinator or signer audit log path"),
+    db_path: Path | None = typer.Option(None, "--db-path", help="Coordinator SQLite database path"),
+    state_path: Path | None = typer.Option(None, "--state-path", help="Legacy/shadow coordinator state file"),
+    audit_log_path: Path | None = typer.Option(None, help="Coordinator or signer audit log path"),
     limit: int = typer.Option(20, help="Maximum records to return"),
     event_type: str | None = typer.Option(None, help="Optional event type filter"),
 ) -> None:
-    if not audit_log_path.exists():
+    if db_path is not None or state_path is not None:
+        service = _service(db_path, state_path, audit_log_path)
+        _print_json(service.tail_audit_events(limit=limit, event_type=event_type))
+        return
+
+    if audit_log_path is None or not audit_log_path.exists():
         _print_json([])
         return
 

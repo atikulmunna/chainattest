@@ -15,12 +15,14 @@ from coordinator.chainattest_coordinator.service import CoordinatorService
 class OperatorCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="chainattest-ops-"))
+        self.db_path = self.temp_dir / "chainattest.db"
         self.state_path = self.temp_dir / "jobs.json"
         self.audit_log_path = self.temp_dir / "audit.jsonl"
         self.runner = CliRunner()
         self.service = CoordinatorService(
             state_path=self.state_path,
             audit_log_path=self.audit_log_path,
+            db_path=self.db_path,
         )
 
     def tearDown(self) -> None:
@@ -40,10 +42,8 @@ class OperatorCliTests(unittest.TestCase):
 
         listed = self._invoke(
             "list-jobs",
-            "--state-path",
-            str(self.state_path),
-            "--audit-log-path",
-            str(self.audit_log_path),
+            "--db-path",
+            str(self.db_path),
         )
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["job_id"], job.job_id)
@@ -51,10 +51,8 @@ class OperatorCliTests(unittest.TestCase):
         shown = self._invoke(
             "show-job",
             job.job_id,
-            "--state-path",
-            str(self.state_path),
-            "--audit-log-path",
-            str(self.audit_log_path),
+            "--db-path",
+            str(self.db_path),
         )
         self.assertEqual(shown["job_id"], job.job_id)
         self.assertEqual(shown["state"], "running")
@@ -69,8 +67,8 @@ class OperatorCliTests(unittest.TestCase):
 
         records = self._invoke(
             "tail-audit",
-            "--audit-log-path",
-            str(self.audit_log_path),
+            "--db-path",
+            str(self.db_path),
             "--limit",
             "2",
         )

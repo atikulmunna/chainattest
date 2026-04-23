@@ -135,6 +135,7 @@ class DestinationSubmissionTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="chainattest-destination-"))
+        self.db_path = self.temp_dir / "chainattest.db"
         self.state_path = self.temp_dir / "jobs.json"
         self.audit_log_path = self.temp_dir / "coordinator-audit.jsonl"
         self.signer_audit_log_path = self.temp_dir / "signer-audit.jsonl"
@@ -150,7 +151,11 @@ class DestinationSubmissionTests(unittest.TestCase):
         os.environ["CHAINATTEST_SIGNER_ALLOWED_PACKAGE_KINDS"] = "attestation,eval"
         os.environ["CHAINATTEST_SIGNER_ALLOWED_DESTINATION_CHAINS"] = "31337"
         os.environ["CHAINATTEST_SIGNER_AUDIT_LOG"] = str(self.signer_audit_log_path)
-        self.service = CoordinatorService(state_path=self.state_path, audit_log_path=self.audit_log_path)
+        self.service = CoordinatorService(
+            state_path=self.state_path,
+            audit_log_path=self.audit_log_path,
+            db_path=self.db_path,
+        )
         self.fixture = run_bridge(
             {
                 "action": "deploy_destination_fixture",
@@ -319,7 +324,7 @@ class DestinationSubmissionTests(unittest.TestCase):
         self.assertIsNotNone(submission)
         self.assertEqual(submission["state"], "submitted")
 
-        restarted = CoordinatorService(state_path=self.state_path)
+        restarted = CoordinatorService(state_path=self.state_path, db_path=self.db_path)
         resumed = restarted.resume_pending_jobs()
         self.assertEqual(len(resumed), 1)
         self.assertEqual(restarted.get_job(submission["job_id"])["state"], "completed")

@@ -74,9 +74,11 @@ class CoordinatorServiceTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temp_dir = Path(tempfile.mkdtemp(prefix="chainattest-coordinator-"))
+        self.db_path = self.temp_dir / "chainattest.db"
         self.service = CoordinatorService(
             state_path=self.temp_dir / "jobs.json",
             audit_log_path=self.temp_dir / "audit.jsonl",
+            db_path=self.db_path,
         )
 
     def tearDown(self) -> None:
@@ -202,6 +204,73 @@ class CoordinatorServiceTests(unittest.TestCase):
 
         self.assertFalse((self.temp_dir / "jobs.json.lock").exists())
         self.assertFalse((self.temp_dir / "audit.jsonl.lock").exists())
+        self.assertTrue(self.db_path.exists())
+
+    def test_legacy_state_and_audit_are_migrated_into_sqlite(self) -> None:
+        legacy_state_path = self.temp_dir / "legacy-jobs.json"
+        legacy_audit_path = self.temp_dir / "legacy-audit.jsonl"
+        legacy_db_path = self.temp_dir / "legacy.db"
+        now = 1775600000
+
+        legacy_state_path.write_text(
+            json.dumps(
+                {
+                    "status": {
+                        "status": "active",
+                        "queue_depth": 1,
+                        "pending_signature_requests": 0,
+                        "proof_jobs_in_progress": 0,
+                        "submitted_jobs": 0,
+                        "completed_jobs": 0,
+                        "failed_jobs": 0,
+                    },
+                    "job_order": ["job-legacy"],
+                    "jobs": [
+                        {
+                            "job_id": "job-legacy",
+                            "job_kind": "legacy-check",
+                            "input_path": str(self.temp_dir / "legacy.json"),
+                            "output_path": None,
+                            "state": "queued",
+                            "error": None,
+                            "attempts": 0,
+                            "tx_hash": None,
+                            "metadata": {"correlation_id": "corr-legacy"},
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        legacy_audit_path.write_text(
+            json.dumps(
+                {
+                    "timestamp": now,
+                    "event_type": "job_submitted",
+                    "job_id": "job-legacy",
+                    "job_kind": "legacy-check",
+                    "state": "queued",
+                    "attempts": 0,
+                    "tx_hash": None,
+                    "metadata": {"correlation_id": "corr-legacy"},
+                    "correlation_id": "corr-legacy",
+                }
+            )
+            + "\n"
+        )
+
+        migrated = CoordinatorService(
+            state_path=legacy_state_path,
+            audit_log_path=legacy_audit_path,
+            db_path=legacy_db_path,
+        )
+
+        self.assertEqual(len(migrated.list_jobs()), 1)
+        self.assertEqual(migrated.list_jobs()[0]["job_id"], "job-legacy")
+        self.assertEqual(migrated.tail_audit_events(limit=1)[0]["event_type"], "job_submitted")
 
 
 if __name__ == "__main__":
