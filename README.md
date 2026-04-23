@@ -144,6 +144,27 @@ python coordinator/chainattest_coordinator/ops.py --help
 python -m unittest discover -s tests
 ```
 
+### Windows Install Repair
+
+If `npm ci` or `npm install` in `contracts/` fails on Windows with `EPERM` while unlinking Hardhat native binaries such as `edr.win32-x64-msvc.node`, use the repair helper:
+
+```bash
+cd contracts
+npm run repair
+```
+
+This helper:
+
+- stops project-local `node` / `hardhat` processes
+- removes stale temporary npm directories left by failed cleanup
+- reruns `npm install`
+
+If you only want the cleanup step without reinstalling, run:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\repair-contracts.ps1 -SkipInstall
+```
+
 ## Operator Commands
 
 The operator CLI is available at `coordinator/chainattest_coordinator/ops.py`.
