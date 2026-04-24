@@ -62,6 +62,8 @@ library ChainAttestTypes {
         bytes32 randomnessSeedDigest;
         uint32 transcriptSampleCount;
         uint32 transcriptVersion;
+        uint32 batchCount;
+        bytes32 batchResultsDigest;
         uint32 correctCount;
         uint32 incorrectCount;
         uint32 abstainCount;
@@ -78,7 +80,7 @@ library ChainAttestTypes {
         SignatureEntry[] signatures;
         uint32 evalCircuitVersion;
         Groth16Proof proof;
-        uint256[6] publicSignals;
+        uint256[7] publicSignals;
     }
 
     function fieldFromBytes32(bytes32 value) internal pure returns (uint256) {

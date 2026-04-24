@@ -6,7 +6,6 @@ interface IEvalGroth16Verifier {
         uint256[2] memory pA,
         uint256[2][2] memory pB,
         uint256[2] memory pC,
-        uint256[6] memory publicSignals
+        uint256[7] memory publicSignals
     ) external view returns (bool);
 }
-

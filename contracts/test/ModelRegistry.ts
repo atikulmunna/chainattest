@@ -30,6 +30,8 @@ describe("ModelRegistry", function () {
       randomnessSeedDigest: ethers.keccak256(ethers.toUtf8Bytes("randomness-seed")),
       transcriptSampleCount: 100,
       transcriptVersion: 2,
+      batchCount: 4,
+      batchResultsDigest: ethers.keccak256(ethers.toUtf8Bytes("batch-results")),
       correctCount: 92,
       incorrectCount: 8,
       abstainCount: 0,
@@ -118,6 +120,8 @@ describe("ModelRegistry", function () {
       evalInput.randomnessSeedDigest,
       evalInput.transcriptSampleCount,
       evalInput.transcriptVersion,
+      evalInput.batchCount,
+      evalInput.batchResultsDigest,
       evalInput.correctCount,
       evalInput.incorrectCount,
       evalInput.abstainCount,
@@ -139,6 +143,8 @@ describe("ModelRegistry", function () {
         evalInput.randomnessSeedDigest,
         evalInput.transcriptSampleCount,
         evalInput.transcriptVersion,
+        evalInput.batchCount,
+        evalInput.batchResultsDigest,
         evalInput.correctCount,
         evalInput.incorrectCount,
         evalInput.abstainCount,
@@ -175,6 +181,8 @@ describe("ModelRegistry", function () {
         evalInput.randomnessSeedDigest,
         evalInput.transcriptSampleCount,
         evalInput.transcriptVersion,
+        evalInput.batchCount,
+        evalInput.batchResultsDigest,
         evalInput.correctCount,
         evalInput.incorrectCount,
         evalInput.abstainCount,
@@ -204,6 +212,8 @@ describe("ModelRegistry", function () {
     expect(stored.randomnessSeedDigest).to.equal(evalInput.randomnessSeedDigest);
     expect(stored.transcriptSampleCount).to.equal(evalInput.transcriptSampleCount);
     expect(stored.transcriptVersion).to.equal(evalInput.transcriptVersion);
+    expect(stored.batchCount).to.equal(evalInput.batchCount);
+    expect(stored.batchResultsDigest).to.equal(evalInput.batchResultsDigest);
     expect(stored.correctCount).to.equal(evalInput.correctCount);
     expect(stored.incorrectCount).to.equal(evalInput.incorrectCount);
     expect(stored.abstainCount).to.equal(evalInput.abstainCount);
@@ -236,6 +246,8 @@ describe("ModelRegistry", function () {
       evalInput.randomnessSeedDigest,
       evalInput.transcriptSampleCount,
       evalInput.transcriptVersion,
+      evalInput.batchCount,
+      evalInput.batchResultsDigest,
       evalInput.correctCount,
       evalInput.incorrectCount,
       evalInput.abstainCount,

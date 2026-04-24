@@ -158,6 +158,9 @@ class CoordinatorServiceTests(unittest.TestCase):
                 randomness_seed_digest="0x" + "44" * 32,
                 transcript_sample_count=100,
                 transcript_version=2,
+                batch_correct_counts=[20, 24, 23, 25],
+                batch_incorrect_counts=[2, 1, 3, 2],
+                batch_abstain_counts=[0, 0, 0, 0],
                 correct_count=92,
                 incorrect_count=8,
                 abstain_count=0,
@@ -190,7 +193,7 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertIn("pA", package["proof"])
         self.assertIn("pB", package["proof"])
         self.assertIn("pC", package["proof"])
-        self.assertEqual(len(package["publicSignals"]), 6)
+        self.assertEqual(len(package["publicSignals"]), 7)
         self.assertTrue(Path(result["proof_path"]).exists())
         self.assertTrue(Path(result["signatures_path"]).exists())
 

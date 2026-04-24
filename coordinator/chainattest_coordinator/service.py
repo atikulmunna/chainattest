@@ -103,6 +103,9 @@ class EvalBundleRequest:
     randomness_seed_digest: str
     transcript_sample_count: int
     transcript_version: int
+    batch_correct_counts: list[int]
+    batch_incorrect_counts: list[int]
+    batch_abstain_counts: list[int]
     correct_count: int
     incorrect_count: int
     abstain_count: int
@@ -119,7 +122,7 @@ class EvalBundleRequest:
     adapter_id: str
     finality_delay_blocks: int
     output_dir: Path
-    eval_circuit_version: int = 2
+    eval_circuit_version: int = 3
     destination_chain_id: int | None = None
     destination_rpc_url: str | None = None
     destination_submitter_private_key: str | None = None
@@ -580,12 +583,12 @@ class CoordinatorService:
                 str(request.transcript_sample_count),
                 "--transcript-version",
                 str(request.transcript_version),
-                "--correct-count",
-                str(request.correct_count),
-                "--incorrect-count",
-                str(request.incorrect_count),
-                "--abstain-count",
-                str(request.abstain_count),
+                "--batch-correct-counts",
+                self._csv(request.batch_correct_counts),
+                "--batch-incorrect-counts",
+                self._csv(request.batch_incorrect_counts),
+                "--batch-abstain-counts",
+                self._csv(request.batch_abstain_counts),
                 "--threshold-bps",
                 str(request.threshold_bps),
                 "--evaluator",

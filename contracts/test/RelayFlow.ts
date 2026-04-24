@@ -78,6 +78,8 @@ function evalPackageType() {
     bytes32 randomnessSeedDigest,
     uint32 transcriptSampleCount,
     uint32 transcriptVersion,
+    uint32 batchCount,
+    bytes32 batchResultsDigest,
     uint32 correctCount,
     uint32 incorrectCount,
     uint32 abstainCount,
@@ -94,7 +96,7 @@ function evalPackageType() {
     tuple(address signer, bytes signature)[] signatures,
     uint32 evalCircuitVersion,
     tuple(uint256[2] pA, uint256[2][2] pB, uint256[2] pC) proof,
-    uint256[6] publicSignals
+    uint256[7] publicSignals
   )`;
 }
 
@@ -110,13 +112,28 @@ function computeTranscriptDigest(
   randomnessSeedDigest: string,
   transcriptSampleCount: number,
   transcriptVersion: number,
+  batchCount: number,
+  batchResultsDigest: string,
   correctCount: number,
   incorrectCount: number,
   abstainCount: number
 ): string {
   return ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "bytes32", "bytes32", "bytes32", "bytes32", "uint32", "uint32", "uint32", "uint32", "uint32"],
+      [
+        "uint256",
+        "bytes32",
+        "bytes32",
+        "bytes32",
+        "bytes32",
+        "uint32",
+        "uint32",
+        "uint32",
+        "bytes32",
+        "uint32",
+        "uint32",
+        "uint32"
+      ],
       [
         attestationId,
         benchmarkDigest,
@@ -125,6 +142,8 @@ function computeTranscriptDigest(
         randomnessSeedDigest,
         transcriptSampleCount,
         transcriptVersion,
+        batchCount,
+        batchResultsDigest,
         correctCount,
         incorrectCount,
         abstainCount
@@ -188,6 +207,8 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
       { name: "randomnessSeedDigest", type: "bytes32" },
       { name: "transcriptSampleCount", type: "uint32" },
       { name: "transcriptVersion", type: "uint32" },
+      { name: "batchCount", type: "uint32" },
+      { name: "batchResultsDigest", type: "bytes32" },
       { name: "correctCount", type: "uint32" },
       { name: "incorrectCount", type: "uint32" },
       { name: "abstainCount", type: "uint32" },
@@ -212,6 +233,8 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
     randomnessSeedDigest: pkg.randomnessSeedDigest,
     transcriptSampleCount: pkg.transcriptSampleCount,
     transcriptVersion: pkg.transcriptVersion,
+    batchCount: pkg.batchCount,
+    batchResultsDigest: pkg.batchResultsDigest,
     correctCount: pkg.correctCount,
     incorrectCount: pkg.incorrectCount,
     abstainCount: pkg.abstainCount,
@@ -327,12 +350,14 @@ describe("RelayFlow", function () {
     const { adapter, adapterId, deployer, signer1, signer2, signer3, evalVerifier } = fixture;
     const evalProof = normalizeProof(readJson("eval_proof.json"));
     const evalSignals = normalizeSignals(readJson("eval_public.json"));
-    const benchmarkDigest = ethers.keccak256(ethers.toUtf8Bytes("benchmark"));
-    const datasetSplitDigest = ethers.keccak256(ethers.toUtf8Bytes("dataset-split"));
-    const inferenceConfigDigest = ethers.keccak256(ethers.toUtf8Bytes("inference-config"));
-    const randomnessSeedDigest = ethers.keccak256(ethers.toUtf8Bytes("randomness-seed"));
+    const benchmarkDigest = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const datasetSplitDigest = "0x2222222222222222222222222222222222222222222222222222222222222222";
+    const inferenceConfigDigest = "0x3333333333333333333333333333333333333333333333333333333333333333";
+    const randomnessSeedDigest = "0x4444444444444444444444444444444444444444444444444444444444444444";
     const transcriptSampleCount = 100;
     const transcriptVersion = 2;
+    const batchCount = 4;
+    const batchResultsDigest = ethers.toBeHex(evalSignals[3], 32);
     const correctCount = 92;
     const incorrectCount = 8;
     const abstainCount = 0;
@@ -344,6 +369,8 @@ describe("RelayFlow", function () {
       randomnessSeedDigest,
       transcriptSampleCount,
       transcriptVersion,
+      batchCount,
+      batchResultsDigest,
       correctCount,
       incorrectCount,
       abstainCount
@@ -364,21 +391,23 @@ describe("RelayFlow", function () {
       randomnessSeedDigest,
       transcriptSampleCount,
       transcriptVersion,
+      batchCount,
+      batchResultsDigest,
       correctCount,
       incorrectCount,
       abstainCount,
-      scoreCommitment: evalSignals[3],
-      thresholdBps: Number(evalSignals[4]),
+      scoreCommitment: evalSignals[4],
+      thresholdBps: Number(evalSignals[5]),
       evaluator: await evaluatorSigner.getAddress(),
       evaluatorKeyId: evaluatorKeyId(await evaluatorSigner.getAddress()),
-      evaluatorPolicyDigest: ethers.keccak256(ethers.toUtf8Bytes("policy:top1-accuracy-v1")),
+      evaluatorPolicyDigest: "0x6666666666666666666666666666666666666666666666666666666666666666",
       evaluatorPolicyVersion: 1,
       evaluatorSignature: "0x",
       claimedAtBlock: 12350n,
       adapterId,
       finalityDelayBlocks: 12n,
       signatures: [],
-      evalCircuitVersion: Number(evalSignals[5]),
+      evalCircuitVersion: Number(evalSignals[6]),
       proof: evalProof,
       publicSignals: evalSignals,
       ...(options.packageOverrides ?? {})

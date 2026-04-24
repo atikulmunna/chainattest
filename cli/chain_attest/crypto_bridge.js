@@ -4,6 +4,7 @@ const { ethers } = require("../../contracts/node_modules/ethers");
 const circomlibjs = require("../../circuits/node_modules/circomlibjs");
 
 const BN254_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+const MAX_EVAL_BATCHES = 4;
 const SOURCE_RECORD_APPROVAL_TYPES = {
   SourceRecordApproval: [
     { name: "sourceChainId", type: "uint256" },
@@ -29,6 +30,8 @@ const EVAL_CLAIM_ATTESTATION_TYPES = {
     { name: "randomnessSeedDigest", type: "bytes32" },
     { name: "transcriptSampleCount", type: "uint32" },
     { name: "transcriptVersion", type: "uint32" },
+    { name: "batchCount", type: "uint32" },
+    { name: "batchResultsDigest", type: "bytes32" },
     { name: "correctCount", type: "uint32" },
     { name: "incorrectCount", type: "uint32" },
     { name: "abstainCount", type: "uint32" },
@@ -92,6 +95,8 @@ function evalPackageType() {
     bytes32 randomnessSeedDigest,
     uint32 transcriptSampleCount,
     uint32 transcriptVersion,
+    uint32 batchCount,
+    bytes32 batchResultsDigest,
     uint32 correctCount,
     uint32 incorrectCount,
     uint32 abstainCount,
@@ -108,7 +113,7 @@ function evalPackageType() {
     tuple(address signer, bytes signature)[] signatures,
     uint32 evalCircuitVersion,
     tuple(uint256[2] pA, uint256[2][2] pB, uint256[2] pC) proof,
-    uint256[6] publicSignals
+    uint256[7] publicSignals
   )`;
 }
 
@@ -155,6 +160,58 @@ function verificationKey(kind, pkg) {
 
 function evaluatorKeyIdForAddress(address) {
   return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address"], [address]));
+}
+
+function parseBatchCounts(values) {
+  if (Array.isArray(values)) {
+    return values.map((value) => BigInt(value));
+  }
+  if (typeof values !== "string") {
+    throw new Error("batch count inputs must be provided as CSV strings or arrays");
+  }
+  const trimmed = values.trim();
+  if (!trimmed) {
+    return [];
+  }
+  return trimmed.split(",").map((value) => BigInt(value.trim()));
+}
+
+async function computeBatchResultsDigest(batchCorrectCounts, batchIncorrectCounts, batchAbstainCounts) {
+  const correctCounts = parseBatchCounts(batchCorrectCounts);
+  const incorrectCounts = parseBatchCounts(batchIncorrectCounts);
+  const abstainCounts = parseBatchCounts(batchAbstainCounts);
+  if (
+    correctCounts.length !== incorrectCounts.length ||
+    correctCounts.length !== abstainCounts.length
+  ) {
+    throw new Error("batch count arrays must have the same length");
+  }
+  if (correctCounts.length === 0) {
+    throw new Error("at least one batch summary is required");
+  }
+  if (correctCounts.length > MAX_EVAL_BATCHES) {
+    throw new Error(`batch count arrays may contain at most ${MAX_EVAL_BATCHES} entries`);
+  }
+
+  const poseidon = await circomlibjs.buildPoseidon();
+  let digest = poseidon.F.toString(poseidon([BigInt(correctCounts.length), 0n, 0n, 0n, 0n]));
+  for (let i = 0; i < MAX_EVAL_BATCHES; i += 1) {
+    const correct = correctCounts[i] ?? 0n;
+    const incorrect = incorrectCounts[i] ?? 0n;
+    const abstain = abstainCounts[i] ?? 0n;
+    digest = poseidon.F.toString(
+      poseidon([BigInt(digest), correct, incorrect, abstain, BigInt(i + 1)])
+    );
+  }
+
+  return {
+    batchCount: correctCounts.length.toString(),
+    batchResultsDigestField: BigInt(digest).toString(),
+    batchResultsDigest: ethers.toBeHex(BigInt(digest), 32),
+    batchCorrectCounts: correctCounts.map((value) => value.toString()),
+    batchIncorrectCounts: incorrectCounts.map((value) => value.toString()),
+    batchAbstainCounts: abstainCounts.map((value) => value.toString()),
+  };
 }
 
 function normalizeGroth16Proof(proof) {
@@ -258,7 +315,20 @@ async function main() {
   if (payload.action === "transcript_digest") {
     const digest = ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(
-        ["uint256", "bytes32", "bytes32", "bytes32", "bytes32", "uint32", "uint32", "uint32", "uint32", "uint32"],
+        [
+          "uint256",
+          "bytes32",
+          "bytes32",
+          "bytes32",
+          "bytes32",
+          "uint32",
+          "uint32",
+          "uint32",
+          "bytes32",
+          "uint32",
+          "uint32",
+          "uint32",
+        ],
         [
           BigInt(payload.attestationId),
           payload.benchmarkDigest,
@@ -267,6 +337,8 @@ async function main() {
           payload.randomnessSeedDigest,
           Number(payload.transcriptSampleCount),
           Number(payload.transcriptVersion),
+          Number(payload.batchCount),
+          payload.batchResultsDigest,
           Number(payload.correctCount),
           Number(payload.incorrectCount),
           Number(payload.abstainCount),
@@ -274,6 +346,19 @@ async function main() {
       )
     );
     process.stdout.write(JSON.stringify({ evalTranscriptDigest: digest }));
+    return;
+  }
+
+  if (payload.action === "batch_results_digest") {
+    process.stdout.write(
+      JSON.stringify(
+        await computeBatchResultsDigest(
+          payload.batchCorrectCounts,
+          payload.batchIncorrectCounts,
+          payload.batchAbstainCounts
+        )
+      )
+    );
     return;
   }
 
@@ -300,8 +385,28 @@ async function main() {
     const correctCount = BigInt(payload.correctCount);
     const incorrectCount = BigInt(payload.incorrectCount);
     const abstainCount = BigInt(payload.abstainCount);
+    const batchDigest = await computeBatchResultsDigest(
+      payload.batchCorrectCounts,
+      payload.batchIncorrectCounts,
+      payload.batchAbstainCounts
+    );
+    if (payload.batchCount && BigInt(payload.batchCount) !== BigInt(batchDigest.batchCount)) {
+      throw new Error("batchCount does not match the provided batch summary arrays");
+    }
+    if (
+      payload.batchResultsDigest &&
+      payload.batchResultsDigest.toLowerCase() !== batchDigest.batchResultsDigest.toLowerCase()
+    ) {
+      throw new Error("batchResultsDigest does not match the provided batch summary arrays");
+    }
     if (correctCount + incorrectCount + abstainCount !== transcriptSampleCount) {
       throw new Error("transcript summary counts must sum to transcriptSampleCount");
+    }
+    const totalBatchCorrect = batchDigest.batchCorrectCounts.reduce((sum, value) => sum + BigInt(value), 0n);
+    const totalBatchIncorrect = batchDigest.batchIncorrectCounts.reduce((sum, value) => sum + BigInt(value), 0n);
+    const totalBatchAbstain = batchDigest.batchAbstainCounts.reduce((sum, value) => sum + BigInt(value), 0n);
+    if (totalBatchCorrect !== correctCount || totalBatchIncorrect !== incorrectCount || totalBatchAbstain !== abstainCount) {
+      throw new Error("batch summary totals do not match aggregate transcript counts");
     }
     if (exactScore * transcriptSampleCount !== correctCount * 10000n) {
       throw new Error("exactScore does not match correctCount / transcriptSampleCount");
@@ -319,6 +424,17 @@ async function main() {
       JSON.stringify({
         benchmarkField: benchmarkField.toString(),
         evalTranscriptField: evalTranscriptField.toString(),
+        batchResultsDigestField: batchDigest.batchResultsDigestField,
+        batchCount: batchDigest.batchCount,
+        batchCorrectCounts: Array.from({ length: MAX_EVAL_BATCHES }, (_, index) =>
+          batchDigest.batchCorrectCounts[index] ?? "0"
+        ),
+        batchIncorrectCounts: Array.from({ length: MAX_EVAL_BATCHES }, (_, index) =>
+          batchDigest.batchIncorrectCounts[index] ?? "0"
+        ),
+        batchAbstainCounts: Array.from({ length: MAX_EVAL_BATCHES }, (_, index) =>
+          batchDigest.batchAbstainCounts[index] ?? "0"
+        ),
         exactScore: exactScore.toString(),
         scoreCommitment,
       })
@@ -389,6 +505,8 @@ async function main() {
       randomnessSeedDigest: pkg.randomnessSeedDigest,
       transcriptSampleCount: Number(pkg.transcriptSampleCount),
       transcriptVersion: Number(pkg.transcriptVersion),
+      batchCount: Number(pkg.batchCount),
+      batchResultsDigest: pkg.batchResultsDigest,
       correctCount: Number(pkg.correctCount),
       incorrectCount: Number(pkg.incorrectCount),
       abstainCount: Number(pkg.abstainCount),
