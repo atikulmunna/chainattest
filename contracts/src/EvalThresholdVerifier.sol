@@ -24,12 +24,14 @@ contract EvalThresholdVerifier is EIP712 {
     error EvaluatorKeyMismatch(bytes32 expected, bytes32 actual);
     error InvalidTranscriptCommitment(bytes32 expected, bytes32 actual);
     error InvalidTranscriptSampleCount(uint32 sampleCount);
+    error InvalidBatchCount(uint32 batchCount);
+    error InvalidBatchResultsDigest();
     error InvalidTranscriptSummary(uint32 sampleCount, uint32 totalCount);
     error InvalidEvaluatorPolicyDigest();
     error InvalidEvaluatorPolicyVersion(uint32 policyVersion);
 
     bytes32 public constant EVAL_CLAIM_ATTESTATION_TYPEHASH = keccak256(
-        "EvalClaimAttestation(uint256 sourceChainId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint32 correctCount,uint32 incorrectCount,uint32 abstainCount,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
+        "EvalClaimAttestation(uint256 sourceChainId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint32 batchCount,bytes32 batchResultsDigest,uint32 correctCount,uint32 incorrectCount,uint32 abstainCount,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
     );
 
     struct VerifiedEvalClaim {
@@ -109,9 +111,10 @@ contract EvalThresholdVerifier is EIP712 {
             pkg.publicSignals[0] != pkg.attestationId ||
             pkg.publicSignals[1] != ChainAttestTypes.fieldFromBytes32(pkg.benchmarkDigest) ||
             pkg.publicSignals[2] != ChainAttestTypes.fieldFromBytes32(pkg.evalTranscriptDigest) ||
-            pkg.publicSignals[3] != pkg.scoreCommitment ||
-            pkg.publicSignals[4] != pkg.thresholdBps ||
-            pkg.publicSignals[5] != pkg.evalCircuitVersion
+            pkg.publicSignals[3] != ChainAttestTypes.fieldFromBytes32(pkg.batchResultsDigest) ||
+            pkg.publicSignals[4] != pkg.scoreCommitment ||
+            pkg.publicSignals[5] != pkg.thresholdBps ||
+            pkg.publicSignals[6] != pkg.evalCircuitVersion
         ) {
             revert PublicInputMismatch();
         }
@@ -196,6 +199,8 @@ contract EvalThresholdVerifier is EIP712 {
                 pkg.randomnessSeedDigest,
                 pkg.transcriptSampleCount,
                 pkg.transcriptVersion,
+                pkg.batchCount,
+                pkg.batchResultsDigest,
                 pkg.correctCount,
                 pkg.incorrectCount,
                 pkg.abstainCount,
@@ -216,6 +221,12 @@ contract EvalThresholdVerifier is EIP712 {
         if (pkg.transcriptSampleCount == 0) {
             revert InvalidTranscriptSampleCount(pkg.transcriptSampleCount);
         }
+        if (pkg.batchCount == 0) {
+            revert InvalidBatchCount(pkg.batchCount);
+        }
+        if (pkg.batchResultsDigest == bytes32(0)) {
+            revert InvalidBatchResultsDigest();
+        }
         uint32 totalCount = pkg.correctCount + pkg.incorrectCount + pkg.abstainCount;
         if (totalCount != pkg.transcriptSampleCount) {
             revert InvalidTranscriptSummary(pkg.transcriptSampleCount, totalCount);
@@ -230,6 +241,8 @@ contract EvalThresholdVerifier is EIP712 {
                 pkg.randomnessSeedDigest,
                 pkg.transcriptSampleCount,
                 pkg.transcriptVersion,
+                pkg.batchCount,
+                pkg.batchResultsDigest,
                 pkg.correctCount,
                 pkg.incorrectCount,
                 pkg.abstainCount

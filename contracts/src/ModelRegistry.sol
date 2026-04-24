@@ -21,6 +21,8 @@ contract ModelRegistry {
     error RandomnessSeedDigestRequired();
     error InvalidTranscriptSampleCount(uint32 transcriptSampleCount);
     error InvalidTranscriptVersion(uint32 transcriptVersion);
+    error InvalidBatchCount(uint32 batchCount);
+    error BatchResultsDigestRequired();
     error InvalidTranscriptSummary(uint32 transcriptSampleCount, uint32 totalCount);
     error EvaluatorPolicyDigestRequired();
     error InvalidEvaluatorPolicyVersion(uint32 evaluatorPolicyVersion);
@@ -51,6 +53,8 @@ contract ModelRegistry {
         bytes32 randomnessSeedDigest;
         uint32 transcriptSampleCount;
         uint32 transcriptVersion;
+        uint32 batchCount;
+        bytes32 batchResultsDigest;
         uint32 correctCount;
         uint32 incorrectCount;
         uint32 abstainCount;
@@ -144,6 +148,8 @@ contract ModelRegistry {
         bytes32 randomnessSeedDigest,
         uint32 transcriptSampleCount,
         uint32 transcriptVersion,
+        uint32 batchCount,
+        bytes32 batchResultsDigest,
         uint32 correctCount,
         uint32 incorrectCount,
         uint32 abstainCount,
@@ -165,6 +171,8 @@ contract ModelRegistry {
         if (randomnessSeedDigest == bytes32(0)) revert RandomnessSeedDigestRequired();
         if (transcriptSampleCount == 0) revert InvalidTranscriptSampleCount(transcriptSampleCount);
         if (transcriptVersion == 0) revert InvalidTranscriptVersion(transcriptVersion);
+        if (batchCount == 0) revert InvalidBatchCount(batchCount);
+        if (batchResultsDigest == bytes32(0)) revert BatchResultsDigestRequired();
         uint32 totalCount = correctCount + incorrectCount + abstainCount;
         if (totalCount != transcriptSampleCount) revert InvalidTranscriptSummary(transcriptSampleCount, totalCount);
         if (scoreCommitment == 0) revert ScoreCommitmentRequired();
@@ -186,6 +194,8 @@ contract ModelRegistry {
             randomnessSeedDigest: randomnessSeedDigest,
             transcriptSampleCount: transcriptSampleCount,
             transcriptVersion: transcriptVersion,
+            batchCount: batchCount,
+            batchResultsDigest: batchResultsDigest,
             correctCount: correctCount,
             incorrectCount: incorrectCount,
             abstainCount: abstainCount,

@@ -14,9 +14,8 @@ contract MockEvalGroth16Verifier is IEvalGroth16Verifier {
         uint256[2] memory,
         uint256[2][2] memory,
         uint256[2] memory,
-        uint256[6] memory
+        uint256[7] memory
     ) external view returns (bool) {
         return result;
     }
 }
-
