@@ -100,6 +100,8 @@ The implementation must use these normalized identifiers consistently:
 - `attestationId`
 - `sourceChainId`
 - `sourceSystemId`
+- `sourceChannelId`
+- `sourceTxId`
 - `sourceRegistry`
 - `sourceBlockNumber`
 - `weightsRoot`
@@ -449,6 +451,9 @@ interface ISemanticVerifier {
     struct VerifiedAttestation {
         uint256 attestationId;
         uint256 sourceChainId;
+        bytes32 sourceSystemId;
+        bytes32 sourceChannelId;
+        bytes32 sourceTxId;
         address sourceRegistry;
         uint256 sourceBlockNumber;
         bytes32 sourceRecordHash;
@@ -464,6 +469,7 @@ interface ISemanticVerifier {
         uint256 indexed sourceChainId,
         address indexed sourceRegistry,
         uint256 indexed attestationId,
+        bytes32 sourceSystemId,
         bytes32 adapterId,
         uint32 semanticCircuitVersion
     );
@@ -500,6 +506,9 @@ interface IEvalThresholdVerifier {
     struct VerifiedEvalClaim {
         uint256 attestationId;
         uint256 sourceChainId;
+        bytes32 sourceSystemId;
+        bytes32 sourceChannelId;
+        bytes32 sourceTxId;
         address sourceRegistry;
         bytes32 benchmarkDigest;
         bytes32 evalTranscriptDigest;
@@ -516,6 +525,7 @@ interface IEvalThresholdVerifier {
         address indexed sourceRegistry,
         uint256 indexed attestationId,
         bytes32 benchmarkDigest,
+        bytes32 sourceSystemId,
         bytes32 adapterId,
         uint32 evalCircuitVersion
     );
@@ -577,12 +587,14 @@ Recommended keys:
 ```solidity
 bytes32 attestationKey = keccak256(abi.encode(
     sourceChainId,
+    sourceSystemId,
     sourceRegistry,
     attestationId
 ));
 
 bytes32 evalClaimKey = keccak256(abi.encode(
     sourceChainId,
+    sourceSystemId,
     sourceRegistry,
     attestationId,
     benchmarkDigest
@@ -633,6 +645,9 @@ The message signed by committee members must be the EIP-712 typed hash of:
 ```solidity
 struct SourceRecordApproval {
     uint256 sourceChainId;
+    bytes32 sourceSystemId;
+    bytes32 sourceChannelId;
+    bytes32 sourceTxId;
     address registryAddress;
     uint256 sourceBlockNumber;
     bytes32 sourceBlockHash;
@@ -666,6 +681,9 @@ For `ATTESTATION_REGISTER`:
 ```text
 sourceRecordHash = keccak256(abi.encode(
   sourceChainId,
+  sourceSystemId,
+  sourceChannelId,
+  sourceTxId,
   sourceRegistry,
   attestationId,
   modelFileDigest,
@@ -685,6 +703,9 @@ For `EVAL_CLAIM_REGISTER`:
 ```text
 evalClaimRecordHash = keccak256(abi.encode(
   sourceChainId,
+  sourceSystemId,
+  sourceChannelId,
+  sourceTxId,
   sourceRegistry,
   attestationId,
   benchmarkDigest,
@@ -776,6 +797,8 @@ Off-chain representation uses JSON for transport and debugging, then ABI-encodes
 For permissioned or non-EVM source ledgers, the package must carry:
 
 - `sourceSystemId`: a stable `bytes32` identifier for the external registry or ledger namespace
+- `sourceChannelId`: a stable `bytes32` identifier for the permissioned ledger channel or partition
+- `sourceTxId`: a stable `bytes32` identifier for the source transaction or event bundle
 - `sourceRegistry`: a deterministic synthetic EVM address derived from `sourceSystemId`
 
 This allows destination contracts to key verified state consistently while still distinguishing EVM-native sources from permissioned external registries.
@@ -788,6 +811,9 @@ This allows destination contracts to key verified state consistently while still
   "package_type": "ATTESTATION_REGISTER",
   "source": {
     "source_chain_id": "11155111",
+    "source_system_id": "0x...",
+    "source_channel_id": "0x...",
+    "source_tx_id": "0x...",
     "source_registry": "0xRegistry",
     "source_block_number": "123456",
     "source_block_hash": "0xBlockHash"
@@ -835,6 +861,9 @@ This allows destination contracts to key verified state consistently while still
   "package_type": "EVAL_CLAIM_REGISTER",
   "source": {
     "source_chain_id": "11155111",
+    "source_system_id": "0x...",
+    "source_channel_id": "0x...",
+    "source_tx_id": "0x...",
     "source_registry": "0xRegistry",
     "source_block_number": "123500",
     "source_block_hash": "0xBlockHash"
@@ -903,6 +932,8 @@ struct AttestationRelayPackage {
     uint8 packageType;
     uint256 sourceChainId;
     bytes32 sourceSystemId;
+    bytes32 sourceChannelId;
+    bytes32 sourceTxId;
     address sourceRegistry;
     uint256 sourceBlockNumber;
     bytes32 sourceBlockHash;
@@ -935,6 +966,8 @@ struct EvalRelayPackage {
     uint8 packageType;
     uint256 sourceChainId;
     bytes32 sourceSystemId;
+    bytes32 sourceChannelId;
+    bytes32 sourceTxId;
     address sourceRegistry;
     uint256 sourceBlockNumber;
     bytes32 sourceBlockHash;
@@ -1038,6 +1071,9 @@ Inputs:
 - `--manifest`
 - `--semantic-input`
 - `--source-chain-id`
+- optional `--source-system-id`
+- optional `--source-channel-id`
+- optional `--source-tx-id`
 - `--source-registry`
 - `--source-block-number`
 - `--source-block-hash`
@@ -1117,6 +1153,9 @@ Inputs:
 - `--manifest`
 - `--eval-input`
 - `--source-chain-id`
+- optional `--source-system-id`
+- optional `--source-channel-id`
+- optional `--source-tx-id`
 - `--source-registry`
 - `--source-block-number`
 - `--source-block-hash`
@@ -1326,6 +1365,13 @@ The demo runner can:
 - prepare and submit an eval package
 - confirm destination verification
 - write benchmark and artifact outputs under `artifacts/demo/`
+
+The current demo runner supports:
+
+- `--source-mode evm`
+- `--source-mode fabric`
+
+The `fabric` mode emits nonzero `sourceSystemId`, `sourceChannelId`, and `sourceTxId` fields together with a deterministic synthetic `sourceRegistry`.
 
 ### 11.8 Future Service API
 
