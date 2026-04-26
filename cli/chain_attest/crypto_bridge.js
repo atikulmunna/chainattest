@@ -9,6 +9,8 @@ const SOURCE_RECORD_APPROVAL_TYPES = {
   SourceRecordApproval: [
     { name: "sourceChainId", type: "uint256" },
     { name: "sourceSystemId", type: "bytes32" },
+    { name: "sourceChannelId", type: "bytes32" },
+    { name: "sourceTxId", type: "bytes32" },
     { name: "registryAddress", type: "address" },
     { name: "sourceBlockNumber", type: "uint256" },
     { name: "sourceBlockHash", type: "bytes32" },
@@ -23,6 +25,8 @@ const EVAL_CLAIM_ATTESTATION_TYPES = {
   EvalClaimAttestation: [
     { name: "sourceChainId", type: "uint256" },
     { name: "sourceSystemId", type: "bytes32" },
+    { name: "sourceChannelId", type: "bytes32" },
+    { name: "sourceTxId", type: "bytes32" },
     { name: "sourceRegistry", type: "address" },
     { name: "attestationId", type: "uint256" },
     { name: "benchmarkDigest", type: "bytes32" },
@@ -59,6 +63,8 @@ function attestationPackageType() {
     uint8 packageType,
     uint256 sourceChainId,
     bytes32 sourceSystemId,
+    bytes32 sourceChannelId,
+    bytes32 sourceTxId,
     address sourceRegistry,
     uint256 sourceBlockNumber,
     bytes32 sourceBlockHash,
@@ -88,6 +94,8 @@ function evalPackageType() {
     uint8 packageType,
     uint256 sourceChainId,
     bytes32 sourceSystemId,
+    bytes32 sourceChannelId,
+    bytes32 sourceTxId,
     address sourceRegistry,
     uint256 sourceBlockNumber,
     bytes32 sourceBlockHash,
@@ -248,6 +256,8 @@ function computeAttestationRecordHash(pkg) {
       [
         "uint256",
         "bytes32",
+        "bytes32",
+        "bytes32",
         "address",
         "uint256",
         "bytes32",
@@ -263,6 +273,8 @@ function computeAttestationRecordHash(pkg) {
       [
         BigInt(pkg.sourceChainId),
         pkg.sourceSystemId,
+        pkg.sourceChannelId,
+        pkg.sourceTxId,
         pkg.sourceRegistry,
         BigInt(pkg.attestationId),
         pkg.modelFileDigest,
@@ -285,6 +297,8 @@ function computeEvalRecordHash(pkg) {
       [
         "uint256",
         "bytes32",
+        "bytes32",
+        "bytes32",
         "address",
         "uint256",
         "bytes32",
@@ -298,6 +312,8 @@ function computeEvalRecordHash(pkg) {
       [
         BigInt(pkg.sourceChainId),
         pkg.sourceSystemId,
+        pkg.sourceChannelId,
+        pkg.sourceTxId,
         pkg.sourceRegistry,
         BigInt(pkg.attestationId),
         pkg.benchmarkDigest,
@@ -484,6 +500,8 @@ async function main() {
     const value = {
       sourceChainId: BigInt(pkg.sourceChainId),
       sourceSystemId: pkg.sourceSystemId,
+      sourceChannelId: pkg.sourceChannelId,
+      sourceTxId: pkg.sourceTxId,
       registryAddress: pkg.sourceRegistry,
       sourceBlockNumber: BigInt(pkg.sourceBlockNumber),
       sourceBlockHash: pkg.sourceBlockHash,
@@ -522,6 +540,8 @@ async function main() {
     const value = {
       sourceChainId: BigInt(pkg.sourceChainId),
       sourceSystemId: pkg.sourceSystemId,
+      sourceChannelId: pkg.sourceChannelId,
+      sourceTxId: pkg.sourceTxId,
       sourceRegistry: pkg.sourceRegistry,
       attestationId: BigInt(pkg.attestationId),
       benchmarkDigest: pkg.benchmarkDigest,

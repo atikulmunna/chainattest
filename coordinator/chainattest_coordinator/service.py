@@ -75,6 +75,8 @@ class AttestationBundleRequest:
     finality_delay_blocks: int
     output_dir: Path
     source_system_id: str = ZERO_BYTES32
+    source_channel_id: str = ZERO_BYTES32
+    source_tx_id: str = ZERO_BYTES32
     semantic_circuit_version: int = 1
     destination_chain_id: int | None = None
     destination_rpc_url: str | None = None
@@ -125,6 +127,8 @@ class EvalBundleRequest:
     finality_delay_blocks: int
     output_dir: Path
     source_system_id: str = ZERO_BYTES32
+    source_channel_id: str = ZERO_BYTES32
+    source_tx_id: str = ZERO_BYTES32
     eval_circuit_version: int = 3
     destination_chain_id: int | None = None
     destination_rpc_url: str | None = None
@@ -504,6 +508,10 @@ class CoordinatorService:
                 str(request.source_chain_id),
                 "--source-system-id",
                 request.source_system_id,
+                "--source-channel-id",
+                request.source_channel_id,
+                "--source-tx-id",
+                request.source_tx_id,
                 "--source-registry",
                 request.source_registry,
                 "--source-block-number",
@@ -631,6 +639,10 @@ class CoordinatorService:
                 str(request.source_chain_id),
                 "--source-system-id",
                 request.source_system_id,
+                "--source-channel-id",
+                request.source_channel_id,
+                "--source-tx-id",
+                request.source_tx_id,
                 "--source-registry",
                 request.source_registry,
                 "--source-block-number",
@@ -693,6 +705,10 @@ class CoordinatorService:
                 str(request.source_chain_id),
                 "--source-system-id",
                 request.source_system_id,
+                "--source-channel-id",
+                request.source_channel_id,
+                "--source-tx-id",
+                request.source_tx_id,
                 "--source-registry",
                 request.source_registry,
                 "--source-block-number",

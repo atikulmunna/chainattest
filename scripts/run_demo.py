@@ -39,10 +39,15 @@ EVALUATOR_ENV = "CHAINATTEST_DEMO_EVALUATOR_KEY"
 AUTH_TOKEN_ENV = "CHAINATTEST_DEMO_SIGNER_TOKEN"
 ADAPTER_ID = "0x" + "77" * 32
 HTTP_SERVICE_COMMAND = [sys.executable, str(REPO_ROOT / "committee" / "signer_service" / "http_service.py")]
+ZERO_BYTES32 = "0x" + "00" * 32
 
 
 def sha256_digest(path: Path) -> str:
     return "0x" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def sha256_text(value: str) -> str:
+    return "0x" + hashlib.sha256(value.encode()).hexdigest()
 
 
 def run_bridge(payload: dict) -> dict:
@@ -159,6 +164,7 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, default=REPO_ROOT / "artifacts" / "demo")
     parser.add_argument("--rpc-url", type=str, default=None, help="Reuse an existing local RPC URL instead of starting Hardhat.")
     parser.add_argument("--signer-url", type=str, default=None, help="Reuse an existing HTTP signer service instead of starting one.")
+    parser.add_argument("--source-mode", choices=["evm", "fabric"], default="evm")
     args = parser.parse_args()
 
     output_root = args.output_root.resolve()
@@ -263,6 +269,21 @@ def main() -> None:
         dataset_path.write_text('{"split":"train","name":"demo-benchmark"}\n')
 
         owner = wallet_address(DEPLOYER_PRIVATE_KEY)
+        source_system_id = ZERO_BYTES32
+        source_channel_id = ZERO_BYTES32
+        attestation_source_tx_id = ZERO_BYTES32
+        eval_source_tx_id = ZERO_BYTES32
+        source_registry = owner
+        source_chain_id = 11155111
+        if args.source_mode == "fabric":
+            source_system_id = sha256_text("fabric:org1:model-registry")
+            source_channel_id = sha256_text("fabric-channel:ml-governance")
+            attestation_source_tx_id = sha256_text("fabric-tx:attestation-42")
+            eval_source_tx_id = sha256_text("fabric-tx:eval-42-benchmark-1")
+            source_registry = run_bridge(
+                {"action": "normalized_external_registry", "sourceSystemId": source_system_id}
+            )["sourceRegistry"]
+            source_chain_id = 424242
         path_elements = [17, 23]
         path_indices = [0, 1]
         weights_root = compute_semantic_root(
@@ -287,14 +308,17 @@ def main() -> None:
             registered_at_block=12345,
             path_elements=path_elements,
             path_indices=path_indices,
-            source_chain_id=11155111,
-            source_registry=owner,
+            source_chain_id=source_chain_id,
+            source_registry=source_registry,
             source_block_number=54321,
             source_block_hash="0x" + "55" * 32,
             registered_at_time=1775600000,
             adapter_id=ADAPTER_ID,
             finality_delay_blocks=12,
             output_dir=attestation_dir,
+            source_system_id=source_system_id,
+            source_channel_id=source_channel_id,
+            source_tx_id=attestation_source_tx_id,
             destination_chain_id=int(fixture["chainId"]),
             destination_rpc_url=rpc_url,
             destination_submitter_key_env=SUBMITTER_ENV,
@@ -343,14 +367,17 @@ def main() -> None:
             evaluator_policy_digest="0x" + "66" * 32,
             evaluator_policy_version=1,
             salt=123456,
-            source_chain_id=11155111,
-            source_registry=owner,
+            source_chain_id=source_chain_id,
+            source_registry=source_registry,
             source_block_number=54322,
             source_block_hash="0x" + "88" * 32,
             claimed_at_block=54320,
             adapter_id=ADAPTER_ID,
             finality_delay_blocks=12,
             output_dir=eval_dir,
+            source_system_id=source_system_id,
+            source_channel_id=source_channel_id,
+            source_tx_id=eval_source_tx_id,
             destination_chain_id=int(fixture["chainId"]),
             destination_rpc_url=rpc_url,
             destination_submitter_key_env=SUBMITTER_ENV,
@@ -406,6 +433,7 @@ def main() -> None:
         summary = {
             "rpc_url": rpc_url,
             "signer_url": signer_url,
+            "source_mode": args.source_mode,
             "fixture": fixture,
             "attestation": {
                 "bundle": attestation_bundle,
