@@ -38,7 +38,7 @@ The current design is easiest to understand as four layers.
 - model lineage
 - ownership
 - revocation-aware status
-- structured evaluation transcript summaries
+- structured evaluation transcript summaries with batch-aware result digests
 
 ### 2. Source Authenticity
 
@@ -52,8 +52,9 @@ The destination verifier stack checks:
 - semantic Groth16 proofs for ML attestation integrity
 - evaluation Groth16 proofs for thresholded private claims
 - evaluator authorization and evaluator-policy metadata
-- structured transcript consistency
+- structured transcript consistency, including batch summary digests and derived score checks
 - replay protection and public-signal consistency
+- normalized permissioned-source identities via `sourceSystemId` and deterministic synthetic registry addresses
 
 ### 4. Operational Orchestration
 
@@ -66,7 +67,7 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - Solidity contracts for source registration, semantic verification, evaluation verification, and committee authentication
 - generated Groth16 verifier contracts in `contracts/src/generated/`
 - real proof fixtures used by the Hardhat integration tests
-- Circom circuits for semantic attestation and evaluation-threshold proofs
+- Circom circuits for semantic attestation and batch-aware evaluation-threshold proofs
 
 ### Coordinator and CLI
 
@@ -94,6 +95,7 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - machine-readable benchmark summary
 - markdown benchmark table
 - demo runbook and paper-support docs under `docs/`
+- heterogeneous source support for Fabric-style permissioned registries through committee-authenticated `sourceSystemId` packages
 
 ## Repository Map
 
@@ -252,16 +254,16 @@ This is a high-credibility research prototype, not a production launch.
 
 Important current limits:
 
-- the eval proof is bound to a structured transcript summary, not a fully proved benchmark execution trace
+- the eval proof is bound to a batch-aware structured transcript summary, not a fully proved benchmark execution trace
 - the HTTP signer service is still a local reference boundary, not an HSM or managed secret platform
 - SQLite provides strong single-host durability, not multi-writer distributed coordination
-- the heterogeneous permissioned-to-public path remains a roadmap extension, not the MVP delivery target
+- the current permissioned-source path is committee-authenticated and normalized through synthetic registry addresses, not a native Hyperledger Fabric light-client integration
 
 ## Suggested Next Steps
 
 The strongest next engineering moves are:
 
-1. make evaluator transcript semantics richer than the current structured summary
+1. move from batch-aware transcript summaries toward signed or provable evaluator execution traces
 2. replace the local signer reference service with a stronger isolated signer or secret-manager-backed boundary
 3. extend durability and observability for multi-worker coordination
 4. expand benchmark depth and paper-facing evaluation outputs
