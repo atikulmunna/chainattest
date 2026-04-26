@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
-import {CommitteeAuthAdapter} from "./adapters/CommitteeAuthAdapter.sol";
+import {ISourceAuthAdapter} from "./adapters/ISourceAuthAdapter.sol";
 import {ChainAttestTypes} from "./ChainAttestTypes.sol";
 import {SemanticVerifier} from "./SemanticVerifier.sol";
 import {IEvalGroth16Verifier} from "./verifiers/IEvalGroth16Verifier.sol";
@@ -31,12 +31,13 @@ contract EvalThresholdVerifier is EIP712 {
     error InvalidEvaluatorPolicyVersion(uint32 policyVersion);
 
     bytes32 public constant EVAL_CLAIM_ATTESTATION_TYPEHASH = keccak256(
-        "EvalClaimAttestation(uint256 sourceChainId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint32 batchCount,bytes32 batchResultsDigest,uint32 correctCount,uint32 incorrectCount,uint32 abstainCount,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
+        "EvalClaimAttestation(uint256 sourceChainId,bytes32 sourceSystemId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint32 batchCount,bytes32 batchResultsDigest,uint32 correctCount,uint32 incorrectCount,uint32 abstainCount,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
     );
 
     struct VerifiedEvalClaim {
         uint256 attestationId;
         uint256 sourceChainId;
+        bytes32 sourceSystemId;
         address sourceRegistry;
         bytes32 benchmarkDigest;
         bytes32 evalTranscriptDigest;
@@ -56,11 +57,12 @@ contract EvalThresholdVerifier is EIP712 {
         address indexed sourceRegistry,
         uint256 indexed attestationId,
         bytes32 benchmarkDigest,
+        bytes32 sourceSystemId,
         bytes32 adapterId,
         uint32 evalCircuitVersion
     );
 
-    CommitteeAuthAdapter public immutable adapter;
+    ISourceAuthAdapter public immutable adapter;
     SemanticVerifier public immutable semanticVerifier;
     IEvalGroth16Verifier public immutable groth16Verifier;
     mapping(address => bool) public isAuthorizedEvaluator;
@@ -72,7 +74,7 @@ contract EvalThresholdVerifier is EIP712 {
         address groth16VerifierAddress,
         address[] memory authorizedEvaluators
     ) EIP712("ChainAttestEvaluatorStatement", "1") {
-        adapter = CommitteeAuthAdapter(adapterAddress);
+        adapter = ISourceAuthAdapter(adapterAddress);
         semanticVerifier = SemanticVerifier(semanticVerifierAddress);
         groth16Verifier = IEvalGroth16Verifier(groth16VerifierAddress);
 
@@ -123,16 +125,22 @@ contract EvalThresholdVerifier is EIP712 {
             revert InvalidProof();
         }
 
-        if (!semanticVerifier.isVerified(sourceChainId, pkg.sourceRegistry, pkg.attestationId)) {
+        if (
+            !semanticVerifier.isVerifiedForSourceSystem(
+                sourceChainId, pkg.sourceSystemId, pkg.sourceRegistry, pkg.attestationId
+            )
+        ) {
             revert AttestationNotVerified();
         }
 
-        bytes32 key = keccak256(abi.encode(sourceChainId, pkg.sourceRegistry, pkg.attestationId, pkg.benchmarkDigest));
+        bytes32 key =
+            keccak256(abi.encode(sourceChainId, pkg.sourceSystemId, pkg.sourceRegistry, pkg.attestationId, pkg.benchmarkDigest));
         if (verifiedEvalClaims[key].verifiedAt != 0) revert ReplayDetected(key);
 
         verifiedEvalClaims[key] = VerifiedEvalClaim({
             attestationId: pkg.attestationId,
             sourceChainId: sourceChainId,
+            sourceSystemId: pkg.sourceSystemId,
             sourceRegistry: pkg.sourceRegistry,
             benchmarkDigest: pkg.benchmarkDigest,
             evalTranscriptDigest: pkg.evalTranscriptDigest,
@@ -152,6 +160,7 @@ contract EvalThresholdVerifier is EIP712 {
             pkg.sourceRegistry,
             pkg.attestationId,
             pkg.benchmarkDigest,
+            pkg.sourceSystemId,
             adapterId,
             pkg.evalCircuitVersion
         );
@@ -190,6 +199,7 @@ contract EvalThresholdVerifier is EIP712 {
             abi.encode(
                 EVAL_CLAIM_ATTESTATION_TYPEHASH,
                 pkg.sourceChainId,
+                pkg.sourceSystemId,
                 pkg.sourceRegistry,
                 pkg.attestationId,
                 pkg.benchmarkDigest,

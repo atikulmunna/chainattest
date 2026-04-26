@@ -39,6 +39,7 @@ function attestationPackageType() {
     uint16 packageVersion,
     uint8 packageType,
     uint256 sourceChainId,
+    bytes32 sourceSystemId,
     address sourceRegistry,
     uint256 sourceBlockNumber,
     bytes32 sourceBlockHash,
@@ -67,6 +68,7 @@ function evalPackageType() {
     uint16 packageVersion,
     uint8 packageType,
     uint256 sourceChainId,
+    bytes32 sourceSystemId,
     address sourceRegistry,
     uint256 sourceBlockNumber,
     bytes32 sourceBlockHash,
@@ -102,6 +104,13 @@ function evalPackageType() {
 
 function evaluatorKeyId(address: string): string {
   return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address"], [address]));
+}
+
+function normalizedExternalRegistry(sourceSystemId: string): string {
+  const digest = ethers.keccak256(
+    ethers.solidityPacked(["string", "bytes32"], ["chainattest:external-registry", sourceSystemId])
+  );
+  return ethers.getAddress(`0x${digest.slice(-40)}`);
 }
 
 function computeTranscriptDigest(
@@ -163,6 +172,7 @@ async function signApproval(adapter: any, signer: any, pkg: any, recordHash: str
   const types = {
     SourceRecordApproval: [
       { name: "sourceChainId", type: "uint256" },
+      { name: "sourceSystemId", type: "bytes32" },
       { name: "registryAddress", type: "address" },
       { name: "sourceBlockNumber", type: "uint256" },
       { name: "sourceBlockHash", type: "bytes32" },
@@ -175,6 +185,7 @@ async function signApproval(adapter: any, signer: any, pkg: any, recordHash: str
   };
   const value = {
     sourceChainId: pkg.sourceChainId,
+    sourceSystemId: pkg.sourceSystemId,
     registryAddress: pkg.sourceRegistry,
     sourceBlockNumber: pkg.sourceBlockNumber,
     sourceBlockHash: pkg.sourceBlockHash,
@@ -198,6 +209,7 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
   const types = {
     EvalClaimAttestation: [
       { name: "sourceChainId", type: "uint256" },
+      { name: "sourceSystemId", type: "bytes32" },
       { name: "sourceRegistry", type: "address" },
       { name: "attestationId", type: "uint256" },
       { name: "benchmarkDigest", type: "bytes32" },
@@ -224,6 +236,7 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
   };
   const value = {
     sourceChainId: pkg.sourceChainId,
+    sourceSystemId: pkg.sourceSystemId,
     sourceRegistry: pkg.sourceRegistry,
     attestationId: pkg.attestationId,
     benchmarkDigest: pkg.benchmarkDigest,
@@ -251,9 +264,9 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
 }
 
 describe("RelayFlow", function () {
-  async function deployFixture() {
+  async function deployFixture(customAdapterId?: string) {
     const [deployer, signer1, signer2, signer3] = await ethers.getSigners();
-    const adapterId = ethers.id("committee-v1");
+    const adapterId = customAdapterId ?? ethers.id("committee-v1");
 
     const Adapter = await ethers.getContractFactory("CommitteeAuthAdapter");
     const adapter = await Adapter.deploy(adapterId, 2, [signer1.address, signer2.address, signer3.address]);
@@ -305,6 +318,7 @@ describe("RelayFlow", function () {
       packageVersion: 1,
       packageType: 0,
       sourceChainId: 11155111n,
+      sourceSystemId: ethers.ZeroHash,
       sourceRegistry: deployer.address,
       sourceBlockNumber: 12345n,
       sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("source-block")),
@@ -380,6 +394,7 @@ describe("RelayFlow", function () {
       packageVersion: 1,
       packageType: 2,
       sourceChainId: 11155111n,
+      sourceSystemId: ethers.ZeroHash,
       sourceRegistry: deployer.address,
       sourceBlockNumber: 12350n,
       sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("eval-block")),
@@ -587,6 +602,50 @@ describe("RelayFlow", function () {
     await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.be.revertedWithCustomError(
       fixture.evalVerifier,
       "InvalidProof"
+    );
+  });
+
+  it("verifies a permissioned-source attestation and eval package end-to-end", async function () {
+    const fixture = await deployFixture(ethers.id("fabric-committee-v1"));
+    const sourceSystemId = ethers.id("fabric:org1:model-registry");
+    const sourceRegistry = normalizedExternalRegistry(sourceSystemId);
+
+    const attPkg = await buildSignedAttestationPackage(fixture, {
+      sourceChainId: 424242n,
+      sourceSystemId,
+      sourceRegistry,
+      sourceBlockNumber: 8801n,
+      sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("fabric-block-8801")),
+      registeredAtTime: 1775601234n,
+    });
+    const attEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attPkg]);
+    await expect(fixture.semanticVerifier.verifyAttestationPackage(attEncoded)).to.emit(
+      fixture.semanticVerifier,
+      "AttestationPackageVerified"
+    );
+    expect(
+      await fixture.semanticVerifier.isVerifiedForSourceSystem(
+        attPkg.sourceChainId,
+        attPkg.sourceSystemId,
+        attPkg.sourceRegistry,
+        attPkg.attestationId
+      )
+    ).to.equal(true);
+
+    const evalPkg = await buildSignedEvalPackage(fixture, {
+      packageOverrides: {
+        sourceChainId: attPkg.sourceChainId,
+        sourceSystemId,
+        sourceRegistry,
+        sourceBlockNumber: 8802n,
+        sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("fabric-block-8802")),
+        claimedAtBlock: 8802n,
+      },
+    });
+    const evalEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalPkg]);
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.emit(
+      fixture.evalVerifier,
+      "EvalClaimPackageVerified"
     );
   });
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {CommitteeAuthAdapter} from "./adapters/CommitteeAuthAdapter.sol";
+import {ISourceAuthAdapter} from "./adapters/ISourceAuthAdapter.sol";
 import {ChainAttestTypes} from "./ChainAttestTypes.sol";
 import {ISemanticGroth16Verifier} from "./verifiers/ISemanticGroth16Verifier.sol";
 
@@ -16,6 +16,7 @@ contract SemanticVerifier {
     struct VerifiedAttestation {
         uint256 attestationId;
         uint256 sourceChainId;
+        bytes32 sourceSystemId;
         address sourceRegistry;
         uint256 sourceBlockNumber;
         bytes32 sourceRecordHash;
@@ -31,16 +32,17 @@ contract SemanticVerifier {
         uint256 indexed sourceChainId,
         address indexed sourceRegistry,
         uint256 indexed attestationId,
+        bytes32 sourceSystemId,
         bytes32 adapterId,
         uint32 semanticCircuitVersion
     );
 
-    CommitteeAuthAdapter public immutable adapter;
+    ISourceAuthAdapter public immutable adapter;
     ISemanticGroth16Verifier public immutable groth16Verifier;
     mapping(bytes32 => VerifiedAttestation) public verifiedAttestations;
 
     constructor(address adapterAddress, address groth16VerifierAddress) {
-        adapter = CommitteeAuthAdapter(adapterAddress);
+        adapter = ISourceAuthAdapter(adapterAddress);
         groth16Verifier = ISemanticGroth16Verifier(groth16VerifierAddress);
     }
 
@@ -78,12 +80,13 @@ contract SemanticVerifier {
             revert InvalidProof();
         }
 
-        bytes32 key = keccak256(abi.encode(sourceChainId, pkg.sourceRegistry, pkg.attestationId));
+        bytes32 key = _verificationKey(sourceChainId, pkg.sourceSystemId, pkg.sourceRegistry, pkg.attestationId);
         if (verifiedAttestations[key].verifiedAt != 0) revert ReplayDetected(key);
 
         verifiedAttestations[key] = VerifiedAttestation({
             attestationId: pkg.attestationId,
             sourceChainId: sourceChainId,
+            sourceSystemId: pkg.sourceSystemId,
             sourceRegistry: pkg.sourceRegistry,
             sourceBlockNumber: sourceBlockNumber,
             sourceRecordHash: sourceRecordHash,
@@ -99,6 +102,7 @@ contract SemanticVerifier {
             sourceChainId,
             pkg.sourceRegistry,
             pkg.attestationId,
+            pkg.sourceSystemId,
             adapterId,
             pkg.semanticCircuitVersion
         );
@@ -109,9 +113,26 @@ contract SemanticVerifier {
         view
         returns (bool)
     {
-        bytes32 key = keccak256(abi.encode(sourceChainId, sourceRegistry, attestationId));
+        return isVerifiedForSourceSystem(sourceChainId, bytes32(0), sourceRegistry, attestationId);
+    }
+
+    function isVerifiedForSourceSystem(
+        uint256 sourceChainId,
+        bytes32 sourceSystemId,
+        address sourceRegistry,
+        uint256 attestationId
+    ) public view returns (bool) {
+        bytes32 key = _verificationKey(sourceChainId, sourceSystemId, sourceRegistry, attestationId);
         VerifiedAttestation memory record = verifiedAttestations[key];
         return record.verifiedAt != 0 && !record.revoked;
+    }
+
+    function _verificationKey(uint256 sourceChainId, bytes32 sourceSystemId, address sourceRegistry, uint256 attestationId)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(sourceChainId, sourceSystemId, sourceRegistry, attestationId));
     }
 
     function _computeAttestationCommitment(ChainAttestTypes.AttestationRelayPackage memory pkg)

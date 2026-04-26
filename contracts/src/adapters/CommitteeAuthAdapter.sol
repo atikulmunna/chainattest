@@ -5,8 +5,9 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 import {ChainAttestTypes} from "../ChainAttestTypes.sol";
+import {ISourceAuthAdapter} from "./ISourceAuthAdapter.sol";
 
-contract CommitteeAuthAdapter is EIP712 {
+contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
     using ECDSA for bytes32;
 
     error InactiveCommittee();
@@ -19,7 +20,7 @@ contract CommitteeAuthAdapter is EIP712 {
 
     bytes32 public constant SOURCE_RECORD_APPROVAL_TYPEHASH =
         keccak256(
-            "SourceRecordApproval(uint256 sourceChainId,address registryAddress,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 attestationId,uint8 messageType,bytes32 recordContentHash,uint256 finalityDelayBlocks,bytes32 adapterId)"
+            "SourceRecordApproval(uint256 sourceChainId,bytes32 sourceSystemId,address registryAddress,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 attestationId,uint8 messageType,bytes32 recordContentHash,uint256 finalityDelayBlocks,bytes32 adapterId)"
         );
 
     struct CommitteeConfig {
@@ -88,6 +89,7 @@ contract CommitteeAuthAdapter is EIP712 {
             sourceRecordHash = _attestationRecordHash(pkg);
             _verifyApprovalSignatures(
                 pkg.sourceChainId,
+                pkg.sourceSystemId,
                 pkg.sourceRegistry,
                 pkg.sourceBlockNumber,
                 pkg.sourceBlockHash,
@@ -118,6 +120,7 @@ contract CommitteeAuthAdapter is EIP712 {
             sourceRecordHash = _evalClaimRecordHash(pkg);
             _verifyApprovalSignatures(
                 pkg.sourceChainId,
+                pkg.sourceSystemId,
                 pkg.sourceRegistry,
                 pkg.sourceBlockNumber,
                 pkg.sourceBlockHash,
@@ -140,6 +143,7 @@ contract CommitteeAuthAdapter is EIP712 {
 
     function computeApprovalDigest(
         uint256 sourceChainId,
+        bytes32 sourceSystemId,
         address registryAddress,
         uint256 sourceBlockNumber,
         bytes32 sourceBlockHash,
@@ -151,6 +155,7 @@ contract CommitteeAuthAdapter is EIP712 {
     ) external view returns (bytes32) {
         return _approvalDigest(
             sourceChainId,
+            sourceSystemId,
             registryAddress,
             sourceBlockNumber,
             sourceBlockHash,
@@ -180,6 +185,7 @@ contract CommitteeAuthAdapter is EIP712 {
 
     function _verifyApprovalSignatures(
         uint256 sourceChainId,
+        bytes32 sourceSystemId,
         address registryAddress,
         uint256 sourceBlockNumber,
         bytes32 sourceBlockHash,
@@ -195,6 +201,7 @@ contract CommitteeAuthAdapter is EIP712 {
 
         bytes32 digest = _approvalDigest(
             sourceChainId,
+            sourceSystemId,
             registryAddress,
             sourceBlockNumber,
             sourceBlockHash,
@@ -229,6 +236,7 @@ contract CommitteeAuthAdapter is EIP712 {
 
     function _approvalDigest(
         uint256 sourceChainId,
+        bytes32 sourceSystemId,
         address registryAddress,
         uint256 sourceBlockNumber,
         bytes32 sourceBlockHash,
@@ -242,6 +250,7 @@ contract CommitteeAuthAdapter is EIP712 {
             abi.encode(
                 SOURCE_RECORD_APPROVAL_TYPEHASH,
                 sourceChainId,
+                sourceSystemId,
                 registryAddress,
                 sourceBlockNumber,
                 sourceBlockHash,
@@ -263,6 +272,7 @@ contract CommitteeAuthAdapter is EIP712 {
         return keccak256(
             abi.encode(
                 pkg.sourceChainId,
+                pkg.sourceSystemId,
                 pkg.sourceRegistry,
                 pkg.attestationId,
                 pkg.modelFileDigest,
@@ -286,6 +296,7 @@ contract CommitteeAuthAdapter is EIP712 {
         return keccak256(
             abi.encode(
                 pkg.sourceChainId,
+                pkg.sourceSystemId,
                 pkg.sourceRegistry,
                 pkg.attestationId,
                 pkg.benchmarkDigest,
