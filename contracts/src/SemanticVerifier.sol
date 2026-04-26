@@ -12,6 +12,8 @@ contract SemanticVerifier {
     error InvalidProof();
     error ReplayDetected(bytes32 key);
     error PublicInputMismatch();
+    error AttestationNotVerified();
+    error AttestationAlreadyRevoked();
 
     struct VerifiedAttestation {
         uint256 attestationId;
@@ -39,6 +41,14 @@ contract SemanticVerifier {
         uint32 semanticCircuitVersion
     );
 
+    event AttestationMarkedRevoked(
+        uint256 indexed sourceChainId,
+        address indexed sourceRegistry,
+        uint256 indexed attestationId,
+        bytes32 sourceSystemId,
+        bytes32 adapterId
+    );
+
     ISourceAuthAdapter public immutable adapter;
     ISemanticGroth16Verifier public immutable groth16Verifier;
     mapping(bytes32 => VerifiedAttestation) public verifiedAttestations;
@@ -53,7 +63,10 @@ contract SemanticVerifier {
             abi.decode(packageData, (ChainAttestTypes.AttestationRelayPackage));
 
         if (pkg.packageVersion != 1) revert UnsupportedPackageVersion(pkg.packageVersion);
-        if (pkg.packageType != ChainAttestTypes.PACKAGE_TYPE_ATTESTATION_REGISTER) {
+        if (
+            pkg.packageType != ChainAttestTypes.PACKAGE_TYPE_ATTESTATION_REGISTER &&
+            pkg.packageType != ChainAttestTypes.PACKAGE_TYPE_ATTESTATION_REVOKE
+        ) {
             revert InvalidPackageType(pkg.packageType);
         }
 
@@ -65,6 +78,23 @@ contract SemanticVerifier {
             uint256 sourceBlockNumber
         ) = adapter.verifySourceRecord(packageData);
         if (!ok) revert AdapterVerificationFailed();
+
+        bytes32 key = _verificationKey(sourceChainId, pkg.sourceSystemId, pkg.sourceRegistry, pkg.attestationId);
+        if (pkg.packageType == ChainAttestTypes.PACKAGE_TYPE_ATTESTATION_REVOKE) {
+            VerifiedAttestation storage existing = verifiedAttestations[key];
+            if (existing.verifiedAt == 0) revert AttestationNotVerified();
+            if (existing.revoked) revert AttestationAlreadyRevoked();
+            existing.revoked = true;
+
+            emit AttestationMarkedRevoked(
+                sourceChainId,
+                pkg.sourceRegistry,
+                pkg.attestationId,
+                pkg.sourceSystemId,
+                adapterId
+            );
+            return;
+        }
 
         uint256 expectedCommitment = _computeAttestationCommitment(pkg);
         if (
@@ -82,7 +112,6 @@ contract SemanticVerifier {
             revert InvalidProof();
         }
 
-        bytes32 key = _verificationKey(sourceChainId, pkg.sourceSystemId, pkg.sourceRegistry, pkg.attestationId);
         if (verifiedAttestations[key].verifiedAt != 0) revert ReplayDetected(key);
 
         verifiedAttestations[key] = VerifiedAttestation({

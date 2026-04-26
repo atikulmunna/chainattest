@@ -276,12 +276,17 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
 }
 
 describe("RelayFlow", function () {
-  async function deployFixture(customAdapterId?: string) {
+  async function deployFixture(customAdapterId?: string, adapterKind: "committee" | "fabric" = "committee") {
     const [deployer, signer1, signer2, signer3] = await ethers.getSigners();
     const adapterId = customAdapterId ?? ethers.id("committee-v1");
 
-    const Adapter = await ethers.getContractFactory("CommitteeAuthAdapter");
-    const adapter = await Adapter.deploy(adapterId, 2, [signer1.address, signer2.address, signer3.address]);
+    const Adapter = await ethers.getContractFactory(
+      adapterKind === "fabric" ? "FabricCommitteeAuthAdapter" : "CommitteeAuthAdapter"
+    );
+    const adapter =
+      adapterKind === "fabric"
+        ? await Adapter.deploy(2, [signer1.address, signer2.address, signer3.address])
+        : await Adapter.deploy(adapterId, 2, [signer1.address, signer2.address, signer3.address]);
     await adapter.waitForDeployment();
 
     const SemanticGroth16 = await ethers.getContractFactory("SemanticGroth16Verifier");
@@ -622,7 +627,7 @@ describe("RelayFlow", function () {
   });
 
   it("verifies a permissioned-source attestation and eval package end-to-end", async function () {
-    const fixture = await deployFixture(ethers.id("fabric-committee-v1"));
+    const fixture = await deployFixture(ethers.id("fabric-committee-v1"), "fabric");
     const sourceSystemId = ethers.id("fabric:org1:model-registry");
     const sourceChannelId = ethers.id("fabric-channel:ml-governance");
     const sourceTxId = ethers.id("fabric-tx:attestation-42");
@@ -669,5 +674,103 @@ describe("RelayFlow", function () {
       fixture.evalVerifier,
       "EvalClaimPackageVerified"
     );
+  });
+
+  it("marks attestation and eval claims revoked for permissioned sources", async function () {
+    const fixture = await deployFixture(ethers.id("fabric-committee-v1"), "fabric");
+    const sourceSystemId = ethers.id("fabric:org1:model-registry");
+    const sourceChannelId = ethers.id("fabric-channel:ml-governance");
+    const sourceRegistry = normalizedExternalRegistry(sourceSystemId);
+
+    const attPkg = await buildSignedAttestationPackage(fixture, {
+      sourceChainId: 424242n,
+      sourceSystemId,
+      sourceChannelId,
+      sourceTxId: ethers.id("fabric-tx:attestation-42"),
+      sourceRegistry,
+      sourceBlockNumber: 8801n,
+      sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("fabric-block-8801")),
+      registeredAtTime: 1775601234n,
+    });
+    const attEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attPkg]);
+    await fixture.semanticVerifier.verifyAttestationPackage(attEncoded);
+
+    const evalPkg = await buildSignedEvalPackage(fixture, {
+      packageOverrides: {
+        sourceChainId: attPkg.sourceChainId,
+        sourceSystemId,
+        sourceChannelId,
+        sourceTxId: ethers.id("fabric-tx:eval-42-benchmark-1"),
+        sourceRegistry,
+        sourceBlockNumber: 8802n,
+        sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("fabric-block-8802")),
+        claimedAtBlock: 8802n,
+      },
+    });
+    const evalEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalPkg]);
+    await fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded);
+
+    const evalRevokePkg = {
+      ...evalPkg,
+      packageType: 3,
+      sourceTxId: ethers.id("fabric-tx:eval-42-benchmark-1-revoke"),
+      signatures: [],
+    };
+    const evalRevokeRecordHash = await fixture.adapter.computeEvalRecordHash(evalRevokePkg);
+    evalRevokePkg.signatures = [
+      {
+        signer: fixture.signer1.address,
+        signature: await signApproval(fixture.adapter, fixture.signer1, evalRevokePkg, evalRevokeRecordHash)
+      },
+      {
+        signer: fixture.signer2.address,
+        signature: await signApproval(fixture.adapter, fixture.signer2, evalRevokePkg, evalRevokeRecordHash)
+      }
+    ];
+    const evalRevokeEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalRevokePkg]);
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalRevokeEncoded)).to.emit(
+      fixture.evalVerifier,
+      "EvalClaimMarkedRevoked"
+    );
+    expect(
+      await fixture.evalVerifier.isEvalClaimVerifiedForSourceSystem(
+        evalPkg.sourceChainId,
+        evalPkg.sourceSystemId,
+        evalPkg.sourceRegistry,
+        evalPkg.attestationId,
+        evalPkg.benchmarkDigest
+      )
+    ).to.equal(false);
+
+    const attRevokePkg = {
+      ...attPkg,
+      packageType: 1,
+      sourceTxId: ethers.id("fabric-tx:attestation-42-revoke"),
+      signatures: [],
+    };
+    const attRevokeRecordHash = await fixture.adapter.computeAttestationRecordHash(attRevokePkg);
+    attRevokePkg.signatures = [
+      {
+        signer: fixture.signer1.address,
+        signature: await signApproval(fixture.adapter, fixture.signer1, attRevokePkg, attRevokeRecordHash)
+      },
+      {
+        signer: fixture.signer2.address,
+        signature: await signApproval(fixture.adapter, fixture.signer2, attRevokePkg, attRevokeRecordHash)
+      }
+    ];
+    const attRevokeEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attRevokePkg]);
+    await expect(fixture.semanticVerifier.verifyAttestationPackage(attRevokeEncoded)).to.emit(
+      fixture.semanticVerifier,
+      "AttestationMarkedRevoked"
+    );
+    expect(
+      await fixture.semanticVerifier.isVerifiedForSourceSystem(
+        attPkg.sourceChainId,
+        attPkg.sourceSystemId,
+        attPkg.sourceRegistry,
+        attPkg.attestationId
+      )
+    ).to.equal(false);
   });
 });
