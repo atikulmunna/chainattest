@@ -580,7 +580,12 @@ async function main() {
   if (payload.action === "deploy_destination_fixture") {
     const provider = new ethers.JsonRpcProvider(payload.rpcUrl);
     const deployer = new ethers.NonceManager(new ethers.Wallet(payload.privateKey, provider));
-    const committeeArtifact = loadArtifact(path.join("adapters", "CommitteeAuthAdapter.sol", "CommitteeAuthAdapter.json"));
+    const adapterKind = payload.adapterKind || "committee";
+    const committeeArtifact = loadArtifact(
+      adapterKind === "fabric"
+        ? path.join("adapters", "FabricCommitteeAuthAdapter.sol", "FabricCommitteeAuthAdapter.json")
+        : path.join("adapters", "CommitteeAuthAdapter.sol", "CommitteeAuthAdapter.json")
+    );
     const semanticGroth16Artifact = loadArtifact(
       path.join("generated", "SemanticGroth16Verifier.sol", "SemanticGroth16Verifier.json")
     );
@@ -595,11 +600,14 @@ async function main() {
       committeeArtifact.bytecode,
       deployer
     );
-    const committee = await committeeFactory.deploy(
-      payload.adapterId,
-      Number(payload.committeeThreshold),
-      payload.committeeSigners
-    );
+    const committee =
+      adapterKind === "fabric"
+        ? await committeeFactory.deploy(Number(payload.committeeThreshold), payload.committeeSigners)
+        : await committeeFactory.deploy(
+            payload.adapterId,
+            Number(payload.committeeThreshold),
+            payload.committeeSigners
+          );
     await committee.waitForDeployment();
 
     const semanticGroth16Factory = new ethers.ContractFactory(
@@ -646,6 +654,7 @@ async function main() {
     process.stdout.write(
       JSON.stringify({
         chainId: network.chainId.toString(),
+        adapterId: await committee.adapterId(),
         committeeAuthAdapter: await committee.getAddress(),
         semanticGroth16Verifier: await semanticGroth16.getAddress(),
         evalGroth16Verifier: await evalGroth16.getAddress(),
@@ -730,9 +739,16 @@ async function main() {
       const artifact = loadArtifact(path.join("EvalThresholdVerifier.sol", "EvalThresholdVerifier.json"));
       const contract = new ethers.Contract(payload.verifierAddress, artifact.abi, provider);
       const record = await contract.verifiedEvalClaims(key);
+      const verified = await contract.isEvalClaimVerifiedForSourceSystem(
+        pkg.sourceChainId,
+        pkg.sourceSystemId,
+        pkg.sourceRegistry,
+        pkg.attestationId,
+        pkg.benchmarkDigest
+      );
       process.stdout.write(
         JSON.stringify({
-          verified: record.verifiedAt > 0n && !record.revoked,
+          verified,
           key,
           record: {
             verifiedAt: record.verifiedAt.toString(),

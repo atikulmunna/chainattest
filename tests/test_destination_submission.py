@@ -423,6 +423,18 @@ class DestinationSubmissionTests(unittest.TestCase):
         self.assertTrue(verification["verified"])
 
     def test_orchestrates_permissioned_source_submission_end_to_end(self) -> None:
+        fabric_fixture = run_bridge(
+            {
+                "action": "deploy_destination_fixture",
+                "rpcUrl": self.rpc_url,
+                "privateKey": DEPLOYER_PRIVATE_KEY,
+                "adapterKind": "fabric",
+                "adapterId": ADAPTER_ID,
+                "committeeThreshold": 2,
+                "committeeSigners": self.committee_addresses,
+                "authorizedEvaluators": [self.evaluator_address],
+            }
+        )
         source_registry = normalized_external_registry(FABRIC_SOURCE_SYSTEM_ID)
 
         attestation_request = self._attestation_request()
@@ -433,6 +445,9 @@ class DestinationSubmissionTests(unittest.TestCase):
         attestation_request.source_registry = source_registry
         attestation_request.source_block_number = 8801
         attestation_request.source_block_hash = "0x" + "ab" * 32
+        attestation_request.adapter_id = fabric_fixture["adapterId"]
+        attestation_request.destination_verifier_address = fabric_fixture["semanticVerifier"]
+        attestation_request.committee_verifier_address = fabric_fixture["committeeAuthAdapter"]
         attestation_result = self.service.orchestrate_attestation(attestation_request)
         self.assertEqual(attestation_result["submission"]["state"], "completed")
 
@@ -445,6 +460,10 @@ class DestinationSubmissionTests(unittest.TestCase):
         eval_request.source_block_number = 8802
         eval_request.source_block_hash = "0x" + "cd" * 32
         eval_request.claimed_at_block = 8802
+        eval_request.adapter_id = fabric_fixture["adapterId"]
+        eval_request.destination_verifier_address = fabric_fixture["evalThresholdVerifier"]
+        eval_request.committee_verifier_address = fabric_fixture["committeeAuthAdapter"]
+        eval_request.eval_verifier_address = fabric_fixture["evalThresholdVerifier"]
         eval_result = self.service.orchestrate_eval(eval_request)
         self.assertEqual(eval_result["submission"]["state"], "completed")
 
@@ -454,7 +473,7 @@ class DestinationSubmissionTests(unittest.TestCase):
                 "action": "query_destination_verification",
                 "rpcUrl": self.rpc_url,
                 "packageKind": "eval",
-                "verifierAddress": self.fixture["evalThresholdVerifier"],
+                "verifierAddress": fabric_fixture["evalThresholdVerifier"],
                 "package": package,
             }
         )
