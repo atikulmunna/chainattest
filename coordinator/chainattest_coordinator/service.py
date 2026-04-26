@@ -26,6 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_ENTRYPOINT = REPO_ROOT / "cli" / "chain_attest" / "main.py"
 CIRCUITS_ROOT = REPO_ROOT / "circuits"
 SNARKJS_ENTRYPOINT = CIRCUITS_ROOT / "node_modules" / "snarkjs" / "build" / "cli.cjs"
+ZERO_BYTES32 = "0x" + "00" * 32
 
 
 class JobState(str, Enum):
@@ -73,6 +74,7 @@ class AttestationBundleRequest:
     adapter_id: str
     finality_delay_blocks: int
     output_dir: Path
+    source_system_id: str = ZERO_BYTES32
     semantic_circuit_version: int = 1
     destination_chain_id: int | None = None
     destination_rpc_url: str | None = None
@@ -122,6 +124,7 @@ class EvalBundleRequest:
     adapter_id: str
     finality_delay_blocks: int
     output_dir: Path
+    source_system_id: str = ZERO_BYTES32
     eval_circuit_version: int = 3
     destination_chain_id: int | None = None
     destination_rpc_url: str | None = None
@@ -499,6 +502,8 @@ class CoordinatorService:
                 str(semantic_input_path),
                 "--source-chain-id",
                 str(request.source_chain_id),
+                "--source-system-id",
+                request.source_system_id,
                 "--source-registry",
                 request.source_registry,
                 "--source-block-number",
@@ -624,6 +629,8 @@ class CoordinatorService:
                 str(eval_input_path),
                 "--source-chain-id",
                 str(request.source_chain_id),
+                "--source-system-id",
+                request.source_system_id,
                 "--source-registry",
                 request.source_registry,
                 "--source-block-number",
@@ -684,6 +691,8 @@ class CoordinatorService:
                 str(eval_input_path),
                 "--source-chain-id",
                 str(request.source_chain_id),
+                "--source-system-id",
+                request.source_system_id,
                 "--source-registry",
                 request.source_registry,
                 "--source-block-number",

@@ -12,6 +12,7 @@ from rich import print
 app = typer.Typer(help="ChainAttest CLI helpers for manifests, witnesses, and relay packages.")
 
 BN254_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617
+ZERO_BYTES32 = "0x" + "00" * 32
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CRYPTO_BRIDGE = Path(__file__).resolve().with_name("crypto_bridge.js")
 
@@ -43,6 +44,16 @@ def normalize_address(address: str) -> str:
     if len(address) != 42:
         raise typer.BadParameter("addresses must be 20-byte hex strings")
     return address.lower()
+
+
+def resolve_source_registry(source_registry: str | None, source_system_id: str) -> str:
+    if source_registry is not None:
+        return normalize_address(source_registry)
+    if source_system_id == ZERO_BYTES32:
+        raise typer.BadParameter("source-registry is required when source-system-id is not provided")
+    return run_bridge(
+        {"action": "normalized_external_registry", "sourceSystemId": source_system_id}
+    )["sourceRegistry"]
 
 
 def run_bridge(payload: dict[str, Any]) -> dict[str, Any]:
@@ -325,7 +336,8 @@ def render_attestation_package(
     manifest: Path = typer.Option(..., help="Attestation manifest JSON"),
     semantic_input: Path = typer.Option(..., help="Semantic witness input JSON"),
     source_chain_id: int = typer.Option(...),
-    source_registry: str = typer.Option(...),
+    source_registry: str | None = typer.Option(None),
+    source_system_id: str = typer.Option(ZERO_BYTES32),
     source_block_number: int = typer.Option(...),
     source_block_hash: str = typer.Option(...),
     registered_at_time: int = typer.Option(...),
@@ -347,7 +359,8 @@ def render_attestation_package(
         "packageVersion": 1,
         "packageType": 0,
         "sourceChainId": str(source_chain_id),
-        "sourceRegistry": source_registry,
+        "sourceSystemId": source_system_id,
+        "sourceRegistry": resolve_source_registry(source_registry, source_system_id),
         "sourceBlockNumber": str(source_block_number),
         "sourceBlockHash": source_block_hash,
         "attestationId": semantic["attestation_id"],
@@ -377,7 +390,8 @@ def render_eval_package(
     manifest: Path = typer.Option(..., help="Eval claim manifest JSON"),
     eval_input: Path = typer.Option(..., help="Eval witness input JSON"),
     source_chain_id: int = typer.Option(...),
-    source_registry: str = typer.Option(...),
+    source_registry: str | None = typer.Option(None),
+    source_system_id: str = typer.Option(ZERO_BYTES32),
     source_block_number: int = typer.Option(...),
     source_block_hash: str = typer.Option(...),
     claimed_at_block: int = typer.Option(...),
@@ -400,7 +414,8 @@ def render_eval_package(
         "packageVersion": 1,
         "packageType": 2,
         "sourceChainId": str(source_chain_id),
-        "sourceRegistry": source_registry,
+        "sourceSystemId": source_system_id,
+        "sourceRegistry": resolve_source_registry(source_registry, source_system_id),
         "sourceBlockNumber": str(source_block_number),
         "sourceBlockHash": source_block_hash,
         "attestationId": claim["attestation_id"],

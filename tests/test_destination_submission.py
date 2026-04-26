@@ -29,6 +29,7 @@ COMMITTEE_PRIVATE_KEYS = [
 ]
 EVALUATOR_PRIVATE_KEY = "0x7c8521182946e51e65338c2f58b0b2f1b3e7b5f5e5d7e5c9f1d9a1c7e5b6f4e3"
 ADAPTER_ID = "0x" + "77" * 32
+FABRIC_SOURCE_SYSTEM_ID = "0x" + "99" * 32
 SUBMITTER_ENV = "CHAINATTEST_TEST_SUBMITTER_KEY"
 COMMITTEE_ENV_1 = "CHAINATTEST_TEST_COMMITTEE_KEY_1"
 COMMITTEE_ENV_2 = "CHAINATTEST_TEST_COMMITTEE_KEY_2"
@@ -83,6 +84,12 @@ def run_bridge(payload: dict) -> dict:
 
 def wallet_address(private_key: str) -> str:
     return run_bridge({"action": "wallet_address", "privateKey": private_key})["address"]
+
+
+def normalized_external_registry(source_system_id: str) -> str:
+    return run_bridge(
+        {"action": "normalized_external_registry", "sourceSystemId": source_system_id}
+    )["sourceRegistry"]
 
 
 def allocate_port() -> int:
@@ -399,6 +406,40 @@ class DestinationSubmissionTests(unittest.TestCase):
         submission = eval_result["submission"]
         self.assertIsNotNone(submission)
         self.assertEqual(submission["state"], "completed")
+
+        package = json.loads(Path(eval_result["bundle"]["package_path"]).read_text())
+        verification = run_bridge(
+            {
+                "action": "query_destination_verification",
+                "rpcUrl": self.rpc_url,
+                "packageKind": "eval",
+                "verifierAddress": self.fixture["evalThresholdVerifier"],
+                "package": package,
+            }
+        )
+        self.assertTrue(verification["verified"])
+
+    def test_orchestrates_permissioned_source_submission_end_to_end(self) -> None:
+        source_registry = normalized_external_registry(FABRIC_SOURCE_SYSTEM_ID)
+
+        attestation_request = self._attestation_request()
+        attestation_request.source_chain_id = 424242
+        attestation_request.source_system_id = FABRIC_SOURCE_SYSTEM_ID
+        attestation_request.source_registry = source_registry
+        attestation_request.source_block_number = 8801
+        attestation_request.source_block_hash = "0x" + "ab" * 32
+        attestation_result = self.service.orchestrate_attestation(attestation_request)
+        self.assertEqual(attestation_result["submission"]["state"], "completed")
+
+        eval_request = self._eval_request()
+        eval_request.source_chain_id = 424242
+        eval_request.source_system_id = FABRIC_SOURCE_SYSTEM_ID
+        eval_request.source_registry = source_registry
+        eval_request.source_block_number = 8802
+        eval_request.source_block_hash = "0x" + "cd" * 32
+        eval_request.claimed_at_block = 8802
+        eval_result = self.service.orchestrate_eval(eval_request)
+        self.assertEqual(eval_result["submission"]["state"], "completed")
 
         package = json.loads(Path(eval_result["bundle"]["package_path"]).read_text())
         verification = run_bridge(
