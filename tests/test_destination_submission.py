@@ -30,6 +30,9 @@ COMMITTEE_PRIVATE_KEYS = [
 EVALUATOR_PRIVATE_KEY = "0x7c8521182946e51e65338c2f58b0b2f1b3e7b5f5e5d7e5c9f1d9a1c7e5b6f4e3"
 ADAPTER_ID = "0x" + "77" * 32
 FABRIC_SOURCE_SYSTEM_ID = "0x" + "99" * 32
+FABRIC_CHANNEL_ID = "0x" + "aa" * 32
+FABRIC_ATTESTATION_TX_ID = "0x" + "bb" * 32
+FABRIC_EVAL_TX_ID = "0x" + "cc" * 32
 SUBMITTER_ENV = "CHAINATTEST_TEST_SUBMITTER_KEY"
 COMMITTEE_ENV_1 = "CHAINATTEST_TEST_COMMITTEE_KEY_1"
 COMMITTEE_ENV_2 = "CHAINATTEST_TEST_COMMITTEE_KEY_2"
@@ -425,6 +428,8 @@ class DestinationSubmissionTests(unittest.TestCase):
         attestation_request = self._attestation_request()
         attestation_request.source_chain_id = 424242
         attestation_request.source_system_id = FABRIC_SOURCE_SYSTEM_ID
+        attestation_request.source_channel_id = FABRIC_CHANNEL_ID
+        attestation_request.source_tx_id = FABRIC_ATTESTATION_TX_ID
         attestation_request.source_registry = source_registry
         attestation_request.source_block_number = 8801
         attestation_request.source_block_hash = "0x" + "ab" * 32
@@ -434,6 +439,8 @@ class DestinationSubmissionTests(unittest.TestCase):
         eval_request = self._eval_request()
         eval_request.source_chain_id = 424242
         eval_request.source_system_id = FABRIC_SOURCE_SYSTEM_ID
+        eval_request.source_channel_id = FABRIC_CHANNEL_ID
+        eval_request.source_tx_id = FABRIC_EVAL_TX_ID
         eval_request.source_registry = source_registry
         eval_request.source_block_number = 8802
         eval_request.source_block_hash = "0x" + "cd" * 32
