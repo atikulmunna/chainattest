@@ -29,6 +29,8 @@ contract EvalThresholdVerifier is EIP712 {
     error InvalidTranscriptSummary(uint32 sampleCount, uint32 totalCount);
     error InvalidEvaluatorPolicyDigest();
     error InvalidEvaluatorPolicyVersion(uint32 policyVersion);
+    error EvalClaimNotVerified();
+    error EvalClaimAlreadyRevoked();
 
     bytes32 public constant EVAL_CLAIM_ATTESTATION_TYPEHASH = keccak256(
         "EvalClaimAttestation(uint256 sourceChainId,bytes32 sourceSystemId,bytes32 sourceChannelId,bytes32 sourceTxId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint32 batchCount,bytes32 batchResultsDigest,uint32 correctCount,uint32 incorrectCount,uint32 abstainCount,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
@@ -64,6 +66,15 @@ contract EvalThresholdVerifier is EIP712 {
         uint32 evalCircuitVersion
     );
 
+    event EvalClaimMarkedRevoked(
+        uint256 indexed sourceChainId,
+        address indexed sourceRegistry,
+        uint256 indexed attestationId,
+        bytes32 benchmarkDigest,
+        bytes32 sourceSystemId,
+        bytes32 adapterId
+    );
+
     ISourceAuthAdapter public immutable adapter;
     SemanticVerifier public immutable semanticVerifier;
     IEvalGroth16Verifier public immutable groth16Verifier;
@@ -92,7 +103,10 @@ contract EvalThresholdVerifier is EIP712 {
             abi.decode(packageData, (ChainAttestTypes.EvalRelayPackage));
 
         if (pkg.packageVersion != 1) revert UnsupportedPackageVersion(pkg.packageVersion);
-        if (pkg.packageType != ChainAttestTypes.PACKAGE_TYPE_EVAL_CLAIM_REGISTER) {
+        if (
+            pkg.packageType != ChainAttestTypes.PACKAGE_TYPE_EVAL_CLAIM_REGISTER &&
+            pkg.packageType != ChainAttestTypes.PACKAGE_TYPE_EVAL_CLAIM_REVOKE
+        ) {
             revert InvalidPackageType(pkg.packageType);
         }
 
@@ -106,6 +120,25 @@ contract EvalThresholdVerifier is EIP712 {
         if (!ok) revert AdapterVerificationFailed();
         sourceRecordHash;
         sourceBlockNumber;
+
+        bytes32 key =
+            keccak256(abi.encode(sourceChainId, pkg.sourceSystemId, pkg.sourceRegistry, pkg.attestationId, pkg.benchmarkDigest));
+        if (pkg.packageType == ChainAttestTypes.PACKAGE_TYPE_EVAL_CLAIM_REVOKE) {
+            VerifiedEvalClaim storage existing = verifiedEvalClaims[key];
+            if (existing.verifiedAt == 0) revert EvalClaimNotVerified();
+            if (existing.revoked) revert EvalClaimAlreadyRevoked();
+            existing.revoked = true;
+
+            emit EvalClaimMarkedRevoked(
+                sourceChainId,
+                pkg.sourceRegistry,
+                pkg.attestationId,
+                pkg.benchmarkDigest,
+                pkg.sourceSystemId,
+                adapterId
+            );
+            return;
+        }
 
         _verifyTranscriptStructure(pkg);
         _verifyEvaluatorPolicy(pkg);
@@ -135,8 +168,6 @@ contract EvalThresholdVerifier is EIP712 {
             revert AttestationNotVerified();
         }
 
-        bytes32 key =
-            keccak256(abi.encode(sourceChainId, pkg.sourceSystemId, pkg.sourceRegistry, pkg.attestationId, pkg.benchmarkDigest));
         if (verifiedEvalClaims[key].verifiedAt != 0) revert ReplayDetected(key);
 
         verifiedEvalClaims[key] = VerifiedEvalClaim({
@@ -168,6 +199,19 @@ contract EvalThresholdVerifier is EIP712 {
             adapterId,
             pkg.evalCircuitVersion
         );
+    }
+
+    function isEvalClaimVerifiedForSourceSystem(
+        uint256 sourceChainId,
+        bytes32 sourceSystemId,
+        address sourceRegistry,
+        uint256 attestationId,
+        bytes32 benchmarkDigest
+    ) public view returns (bool) {
+        bytes32 key = keccak256(abi.encode(sourceChainId, sourceSystemId, sourceRegistry, attestationId, benchmarkDigest));
+        VerifiedEvalClaim memory record = verifiedEvalClaims[key];
+        return record.verifiedAt != 0 && !record.revoked &&
+            semanticVerifier.isVerifiedForSourceSystem(sourceChainId, sourceSystemId, sourceRegistry, attestationId);
     }
 
     function computeEvaluatorAttestationDigest(ChainAttestTypes.EvalRelayPackage calldata pkg)

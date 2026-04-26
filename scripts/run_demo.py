@@ -209,12 +209,15 @@ def main() -> None:
                 "action": "deploy_destination_fixture",
                 "rpcUrl": rpc_url,
                 "privateKey": DEPLOYER_PRIVATE_KEY,
+                "adapterKind": "fabric" if args.source_mode == "fabric" else "committee",
                 "adapterId": ADAPTER_ID,
                 "committeeThreshold": 2,
                 "committeeSigners": committee_addresses,
                 "authorizedEvaluators": [evaluator_address],
             }
         )
+
+        adapter_id = fixture["adapterId"]
 
         if signer_url is None:
             signer_port = allocate_port()
@@ -313,7 +316,7 @@ def main() -> None:
             source_block_number=54321,
             source_block_hash="0x" + "55" * 32,
             registered_at_time=1775600000,
-            adapter_id=ADAPTER_ID,
+            adapter_id=adapter_id,
             finality_delay_blocks=12,
             output_dir=attestation_dir,
             source_system_id=source_system_id,
@@ -372,7 +375,7 @@ def main() -> None:
             source_block_number=54322,
             source_block_hash="0x" + "88" * 32,
             claimed_at_block=54320,
-            adapter_id=ADAPTER_ID,
+            adapter_id=adapter_id,
             finality_delay_blocks=12,
             output_dir=eval_dir,
             source_system_id=source_system_id,
