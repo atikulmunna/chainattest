@@ -8,6 +8,7 @@ const MAX_EVAL_BATCHES = 4;
 const SOURCE_RECORD_APPROVAL_TYPES = {
   SourceRecordApproval: [
     { name: "sourceChainId", type: "uint256" },
+    { name: "sourceSystemId", type: "bytes32" },
     { name: "registryAddress", type: "address" },
     { name: "sourceBlockNumber", type: "uint256" },
     { name: "sourceBlockHash", type: "bytes32" },
@@ -21,6 +22,7 @@ const SOURCE_RECORD_APPROVAL_TYPES = {
 const EVAL_CLAIM_ATTESTATION_TYPES = {
   EvalClaimAttestation: [
     { name: "sourceChainId", type: "uint256" },
+    { name: "sourceSystemId", type: "bytes32" },
     { name: "sourceRegistry", type: "address" },
     { name: "attestationId", type: "uint256" },
     { name: "benchmarkDigest", type: "bytes32" },
@@ -56,6 +58,7 @@ function attestationPackageType() {
     uint16 packageVersion,
     uint8 packageType,
     uint256 sourceChainId,
+    bytes32 sourceSystemId,
     address sourceRegistry,
     uint256 sourceBlockNumber,
     bytes32 sourceBlockHash,
@@ -84,6 +87,7 @@ function evalPackageType() {
     uint16 packageVersion,
     uint8 packageType,
     uint256 sourceChainId,
+    bytes32 sourceSystemId,
     address sourceRegistry,
     uint256 sourceBlockNumber,
     bytes32 sourceBlockHash,
@@ -145,17 +149,24 @@ function verificationKey(kind, pkg) {
   if (kind === "attestation") {
     return ethers.keccak256(
       ethers.AbiCoder.defaultAbiCoder().encode(
-        ["uint256", "address", "uint256"],
-        [BigInt(pkg.sourceChainId), pkg.sourceRegistry, BigInt(pkg.attestationId)]
+        ["uint256", "bytes32", "address", "uint256"],
+        [BigInt(pkg.sourceChainId), pkg.sourceSystemId, pkg.sourceRegistry, BigInt(pkg.attestationId)]
       )
     );
   }
   return ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["uint256", "address", "uint256", "bytes32"],
-      [BigInt(pkg.sourceChainId), pkg.sourceRegistry, BigInt(pkg.attestationId), pkg.benchmarkDigest]
+      ["uint256", "bytes32", "address", "uint256", "bytes32"],
+      [BigInt(pkg.sourceChainId), pkg.sourceSystemId, pkg.sourceRegistry, BigInt(pkg.attestationId), pkg.benchmarkDigest]
     )
   );
+}
+
+function normalizedExternalRegistry(sourceSystemId) {
+  const digest = ethers.keccak256(
+    ethers.solidityPacked(["string", "bytes32"], ["chainattest:external-registry", sourceSystemId])
+  );
+  return ethers.getAddress(`0x${digest.slice(-40)}`);
 }
 
 function evaluatorKeyIdForAddress(address) {
@@ -236,6 +247,7 @@ function computeAttestationRecordHash(pkg) {
     ethers.AbiCoder.defaultAbiCoder().encode(
       [
         "uint256",
+        "bytes32",
         "address",
         "uint256",
         "bytes32",
@@ -250,6 +262,7 @@ function computeAttestationRecordHash(pkg) {
       ],
       [
         BigInt(pkg.sourceChainId),
+        pkg.sourceSystemId,
         pkg.sourceRegistry,
         BigInt(pkg.attestationId),
         pkg.modelFileDigest,
@@ -271,6 +284,7 @@ function computeEvalRecordHash(pkg) {
     ethers.AbiCoder.defaultAbiCoder().encode(
       [
         "uint256",
+        "bytes32",
         "address",
         "uint256",
         "bytes32",
@@ -283,6 +297,7 @@ function computeEvalRecordHash(pkg) {
       ],
       [
         BigInt(pkg.sourceChainId),
+        pkg.sourceSystemId,
         pkg.sourceRegistry,
         BigInt(pkg.attestationId),
         pkg.benchmarkDigest,
@@ -309,6 +324,15 @@ async function main() {
   if (payload.action === "wallet_address") {
     const wallet = new ethers.Wallet(payload.privateKey);
     process.stdout.write(JSON.stringify({ address: wallet.address }));
+    return;
+  }
+
+  if (payload.action === "normalized_external_registry") {
+    process.stdout.write(
+      JSON.stringify({
+        sourceRegistry: normalizedExternalRegistry(payload.sourceSystemId),
+      })
+    );
     return;
   }
 
@@ -459,6 +483,7 @@ async function main() {
     };
     const value = {
       sourceChainId: BigInt(pkg.sourceChainId),
+      sourceSystemId: pkg.sourceSystemId,
       registryAddress: pkg.sourceRegistry,
       sourceBlockNumber: BigInt(pkg.sourceBlockNumber),
       sourceBlockHash: pkg.sourceBlockHash,
@@ -496,6 +521,7 @@ async function main() {
     };
     const value = {
       sourceChainId: BigInt(pkg.sourceChainId),
+      sourceSystemId: pkg.sourceSystemId,
       sourceRegistry: pkg.sourceRegistry,
       attestationId: BigInt(pkg.attestationId),
       benchmarkDigest: pkg.benchmarkDigest,
@@ -660,7 +686,12 @@ async function main() {
     if (kind === "attestation") {
       const artifact = loadArtifact(path.join("SemanticVerifier.sol", "SemanticVerifier.json"));
       const contract = new ethers.Contract(payload.verifierAddress, artifact.abi, provider);
-      const verified = await contract.isVerified(pkg.sourceChainId, pkg.sourceRegistry, pkg.attestationId);
+      const verified = await contract.isVerifiedForSourceSystem(
+        pkg.sourceChainId,
+        pkg.sourceSystemId,
+        pkg.sourceRegistry,
+        pkg.attestationId
+      );
       const record = await contract.verifiedAttestations(key);
       process.stdout.write(
         JSON.stringify({
