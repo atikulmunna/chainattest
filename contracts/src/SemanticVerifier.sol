@@ -17,6 +17,8 @@ contract SemanticVerifier {
         uint256 attestationId;
         uint256 sourceChainId;
         bytes32 sourceSystemId;
+        bytes32 sourceChannelId;
+        bytes32 sourceTxId;
         address sourceRegistry;
         uint256 sourceBlockNumber;
         bytes32 sourceRecordHash;
@@ -87,6 +89,8 @@ contract SemanticVerifier {
             attestationId: pkg.attestationId,
             sourceChainId: sourceChainId,
             sourceSystemId: pkg.sourceSystemId,
+            sourceChannelId: pkg.sourceChannelId,
+            sourceTxId: pkg.sourceTxId,
             sourceRegistry: pkg.sourceRegistry,
             sourceBlockNumber: sourceBlockNumber,
             sourceRecordHash: sourceRecordHash,

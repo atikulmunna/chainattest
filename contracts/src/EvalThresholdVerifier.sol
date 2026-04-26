@@ -31,13 +31,15 @@ contract EvalThresholdVerifier is EIP712 {
     error InvalidEvaluatorPolicyVersion(uint32 policyVersion);
 
     bytes32 public constant EVAL_CLAIM_ATTESTATION_TYPEHASH = keccak256(
-        "EvalClaimAttestation(uint256 sourceChainId,bytes32 sourceSystemId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint32 batchCount,bytes32 batchResultsDigest,uint32 correctCount,uint32 incorrectCount,uint32 abstainCount,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
+        "EvalClaimAttestation(uint256 sourceChainId,bytes32 sourceSystemId,bytes32 sourceChannelId,bytes32 sourceTxId,address sourceRegistry,uint256 attestationId,bytes32 benchmarkDigest,bytes32 evalTranscriptDigest,bytes32 datasetSplitDigest,bytes32 inferenceConfigDigest,bytes32 randomnessSeedDigest,uint32 transcriptSampleCount,uint32 transcriptVersion,uint32 batchCount,bytes32 batchResultsDigest,uint32 correctCount,uint32 incorrectCount,uint32 abstainCount,uint256 scoreCommitment,uint32 thresholdBps,address evaluator,bytes32 evaluatorKeyId,bytes32 evaluatorPolicyDigest,uint32 evaluatorPolicyVersion,uint256 claimedAtBlock,uint32 evalCircuitVersion)"
     );
 
     struct VerifiedEvalClaim {
         uint256 attestationId;
         uint256 sourceChainId;
         bytes32 sourceSystemId;
+        bytes32 sourceChannelId;
+        bytes32 sourceTxId;
         address sourceRegistry;
         bytes32 benchmarkDigest;
         bytes32 evalTranscriptDigest;
@@ -141,6 +143,8 @@ contract EvalThresholdVerifier is EIP712 {
             attestationId: pkg.attestationId,
             sourceChainId: sourceChainId,
             sourceSystemId: pkg.sourceSystemId,
+            sourceChannelId: pkg.sourceChannelId,
+            sourceTxId: pkg.sourceTxId,
             sourceRegistry: pkg.sourceRegistry,
             benchmarkDigest: pkg.benchmarkDigest,
             evalTranscriptDigest: pkg.evalTranscriptDigest,
@@ -200,6 +204,8 @@ contract EvalThresholdVerifier is EIP712 {
                 EVAL_CLAIM_ATTESTATION_TYPEHASH,
                 pkg.sourceChainId,
                 pkg.sourceSystemId,
+                pkg.sourceChannelId,
+                pkg.sourceTxId,
                 pkg.sourceRegistry,
                 pkg.attestationId,
                 pkg.benchmarkDigest,
