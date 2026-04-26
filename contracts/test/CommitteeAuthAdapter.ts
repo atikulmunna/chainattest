@@ -242,4 +242,52 @@ describe("CommitteeAuthAdapter", function () {
       "UnauthorizedSigner"
     );
   });
+
+  it("rejects fabric packages that omit required permissioned metadata", async function () {
+    const [, signer1, signer2, signer3] = await ethers.getSigners();
+    const Adapter = await ethers.getContractFactory("FabricCommitteeAuthAdapter");
+    const adapter = await Adapter.deploy(2, [signer1.address, signer2.address, signer3.address]);
+    await adapter.waitForDeployment();
+
+    const pkg: any = {
+      packageVersion: 1,
+      packageType: 0,
+      sourceChainId: 424242n,
+      sourceSystemId: ethers.ZeroHash,
+      sourceChannelId: ethers.ZeroHash,
+      sourceTxId: ethers.ZeroHash,
+      sourceRegistry: "0x00000000000000000000000000000000000000aa",
+      sourceBlockNumber: 9n,
+      sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("fabric-source-block")),
+      attestationId: 7n,
+      modelFileDigest: ethers.keccak256(ethers.toUtf8Bytes("model-2")),
+      weightsRoot: 11n,
+      datasetCommitment: ethers.keccak256(ethers.toUtf8Bytes("dataset-2")),
+      trainingCommitment: ethers.keccak256(ethers.toUtf8Bytes("training-2")),
+      metadataDigest: ethers.keccak256(ethers.toUtf8Bytes("metadata-2")),
+      owner: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+      parentAttestationId: 0n,
+      registeredAtBlock: 9n,
+      registeredAtTime: 1775600001n,
+      attestationCommitment: 22n,
+      adapterId: ethers.id("fabric-committee-v1"),
+      finalityDelayBlocks: 12n,
+      signatures: [],
+      semanticCircuitVersion: 1,
+      proof: {
+        pA: [0n, 0n],
+        pB: [[0n, 0n], [0n, 0n]],
+        pC: [0n, 0n]
+      },
+      publicSignals: [7n, 9n, 11n, 22n, 1n]
+    };
+
+    const coder = ethers.AbiCoder.defaultAbiCoder();
+    const encoded = coder.encode([attestationPackageType()], [pkg]);
+
+    await expect(adapter.verifySourceRecord(encoded)).to.be.revertedWithCustomError(
+      adapter,
+      "FabricSourceSystemIdRequired"
+    );
+  });
 });

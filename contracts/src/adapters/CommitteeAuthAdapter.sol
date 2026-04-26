@@ -61,6 +61,7 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
     function verifySourceRecord(bytes calldata packageData)
         external
         view
+        virtual
         returns (
             bool ok,
             bytes32 sourceRecordHash,
@@ -85,6 +86,7 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
             if (pkg.adapterId != config.adapterId) {
                 revert WrongAdapterId(config.adapterId, pkg.adapterId);
             }
+            _validateAttestationPackageContext(pkg);
 
             sourceRecordHash = _attestationRecordHash(pkg);
             _verifyApprovalSignatures(
@@ -118,6 +120,7 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
             if (pkg.adapterId != config.adapterId) {
                 revert WrongAdapterId(config.adapterId, pkg.adapterId);
             }
+            _validateEvalPackageContext(pkg);
 
             sourceRecordHash = _evalClaimRecordHash(pkg);
             _verifyApprovalSignatures(
@@ -144,6 +147,18 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
 
         revert UnknownPackageType(packageType);
     }
+
+    function _validateAttestationPackageContext(ChainAttestTypes.AttestationRelayPackage memory)
+        internal
+        view
+        virtual
+    {}
+
+    function _validateEvalPackageContext(ChainAttestTypes.EvalRelayPackage memory)
+        internal
+        view
+        virtual
+    {}
 
     function computeApprovalDigest(
         uint256 sourceChainId,
