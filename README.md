@@ -54,7 +54,7 @@ The destination verifier stack checks:
 - evaluator authorization and evaluator-policy metadata
 - structured transcript consistency, including batch summary digests and derived score checks
 - replay protection and public-signal consistency
-- normalized permissioned-source identities via `sourceSystemId` and deterministic synthetic registry addresses
+- normalized permissioned-source identities via `sourceSystemId`, `sourceChannelId`, `sourceTxId`, and deterministic synthetic registry addresses
 
 ### 4. Operational Orchestration
 
@@ -95,7 +95,7 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - machine-readable benchmark summary
 - markdown benchmark table
 - demo runbook and paper-support docs under `docs/`
-- heterogeneous source support for Fabric-style permissioned registries through committee-authenticated `sourceSystemId` packages
+- heterogeneous source support for Fabric-style permissioned registries through committee-authenticated `sourceSystemId` packages with explicit channel and transaction IDs
 
 ## Repository Map
 
@@ -153,6 +153,7 @@ python coordinator/chainattest_coordinator/ops.py --help
 
 ```bash
 python scripts/run_demo.py --output-root artifacts/demo
+python scripts/run_demo.py --source-mode fabric --output-root artifacts/demo-fabric
 ```
 
 The demo will:
@@ -164,6 +165,13 @@ The demo will:
 - prepare and submit an eval package
 - confirm destination verification
 - write benchmark and artifact outputs under `artifacts/demo/`
+
+In `fabric` mode, the demo additionally emits:
+
+- a nonzero `sourceSystemId`
+- explicit `sourceChannelId`
+- explicit `sourceTxId`
+- a deterministic synthetic `sourceRegistry` derived from `sourceSystemId`
 
 ## Demo Outputs
 
@@ -257,7 +265,7 @@ Important current limits:
 - the eval proof is bound to a batch-aware structured transcript summary, not a fully proved benchmark execution trace
 - the HTTP signer service is still a local reference boundary, not an HSM or managed secret platform
 - SQLite provides strong single-host durability, not multi-writer distributed coordination
-- the current permissioned-source path is committee-authenticated and normalized through synthetic registry addresses, not a native Hyperledger Fabric light-client integration
+- the current permissioned-source path is committee-authenticated and normalized through synthetic registry addresses plus explicit channel / transaction IDs, not a native Hyperledger Fabric light-client integration
 
 ## Suggested Next Steps
 
