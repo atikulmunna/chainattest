@@ -25,6 +25,7 @@ library ChainAttestTypes {
         uint16 packageVersion;
         uint8 packageType;
         uint256 sourceChainId;
+        bytes32 sourceSystemId;
         address sourceRegistry;
         uint256 sourceBlockNumber;
         bytes32 sourceBlockHash;
@@ -51,6 +52,7 @@ library ChainAttestTypes {
         uint16 packageVersion;
         uint8 packageType;
         uint256 sourceChainId;
+        bytes32 sourceSystemId;
         address sourceRegistry;
         uint256 sourceBlockNumber;
         bytes32 sourceBlockHash;
@@ -85,5 +87,9 @@ library ChainAttestTypes {
 
     function fieldFromBytes32(bytes32 value) internal pure returns (uint256) {
         return uint256(value) % BN254_FIELD_MODULUS;
+    }
+
+    function normalizedExternalRegistry(bytes32 sourceSystemId) internal pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encodePacked("chainattest:external-registry", sourceSystemId)))));
     }
 }

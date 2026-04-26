@@ -18,6 +18,7 @@ describe("CommitteeAuthAdapter", function () {
       uint16 packageVersion,
       uint8 packageType,
       uint256 sourceChainId,
+      bytes32 sourceSystemId,
       address sourceRegistry,
       uint256 sourceBlockNumber,
       bytes32 sourceBlockHash,
@@ -55,6 +56,7 @@ describe("CommitteeAuthAdapter", function () {
       packageVersion: 1,
       packageType: 0,
       sourceChainId: 11155111n,
+      sourceSystemId: ethers.ZeroHash,
       sourceRegistry,
       sourceBlockNumber,
       sourceBlockHash,
@@ -91,6 +93,7 @@ describe("CommitteeAuthAdapter", function () {
     const types = {
       SourceRecordApproval: [
         { name: "sourceChainId", type: "uint256" },
+        { name: "sourceSystemId", type: "bytes32" },
         { name: "registryAddress", type: "address" },
         { name: "sourceBlockNumber", type: "uint256" },
         { name: "sourceBlockHash", type: "bytes32" },
@@ -103,6 +106,7 @@ describe("CommitteeAuthAdapter", function () {
     };
     const value = {
       sourceChainId: pkg.sourceChainId,
+      sourceSystemId: pkg.sourceSystemId,
       registryAddress: pkg.sourceRegistry,
       sourceBlockNumber: pkg.sourceBlockNumber,
       sourceBlockHash: pkg.sourceBlockHash,
@@ -144,6 +148,7 @@ describe("CommitteeAuthAdapter", function () {
       packageVersion: 1,
       packageType: 0,
       sourceChainId: 11155111n,
+      sourceSystemId: ethers.ZeroHash,
       sourceRegistry,
       sourceBlockNumber: 9n,
       sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("source-block-2")),
@@ -180,6 +185,7 @@ describe("CommitteeAuthAdapter", function () {
     const types = {
       SourceRecordApproval: [
         { name: "sourceChainId", type: "uint256" },
+        { name: "sourceSystemId", type: "bytes32" },
         { name: "registryAddress", type: "address" },
         { name: "sourceBlockNumber", type: "uint256" },
         { name: "sourceBlockHash", type: "bytes32" },
@@ -192,6 +198,7 @@ describe("CommitteeAuthAdapter", function () {
     };
     const value = {
       sourceChainId: pkg.sourceChainId,
+      sourceSystemId: pkg.sourceSystemId,
       registryAddress: pkg.sourceRegistry,
       sourceBlockNumber: pkg.sourceBlockNumber,
       sourceBlockHash: pkg.sourceBlockHash,
