@@ -20,7 +20,7 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
 
     bytes32 public constant SOURCE_RECORD_APPROVAL_TYPEHASH =
         keccak256(
-            "SourceRecordApproval(uint256 sourceChainId,bytes32 sourceSystemId,address registryAddress,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 attestationId,uint8 messageType,bytes32 recordContentHash,uint256 finalityDelayBlocks,bytes32 adapterId)"
+            "SourceRecordApproval(uint256 sourceChainId,bytes32 sourceSystemId,bytes32 sourceChannelId,bytes32 sourceTxId,address registryAddress,uint256 sourceBlockNumber,bytes32 sourceBlockHash,uint256 attestationId,uint8 messageType,bytes32 recordContentHash,uint256 finalityDelayBlocks,bytes32 adapterId)"
         );
 
     struct CommitteeConfig {
@@ -90,6 +90,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
             _verifyApprovalSignatures(
                 pkg.sourceChainId,
                 pkg.sourceSystemId,
+                pkg.sourceChannelId,
+                pkg.sourceTxId,
                 pkg.sourceRegistry,
                 pkg.sourceBlockNumber,
                 pkg.sourceBlockHash,
@@ -121,6 +123,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
             _verifyApprovalSignatures(
                 pkg.sourceChainId,
                 pkg.sourceSystemId,
+                pkg.sourceChannelId,
+                pkg.sourceTxId,
                 pkg.sourceRegistry,
                 pkg.sourceBlockNumber,
                 pkg.sourceBlockHash,
@@ -144,6 +148,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
     function computeApprovalDigest(
         uint256 sourceChainId,
         bytes32 sourceSystemId,
+        bytes32 sourceChannelId,
+        bytes32 sourceTxId,
         address registryAddress,
         uint256 sourceBlockNumber,
         bytes32 sourceBlockHash,
@@ -156,6 +162,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
         return _approvalDigest(
             sourceChainId,
             sourceSystemId,
+            sourceChannelId,
+            sourceTxId,
             registryAddress,
             sourceBlockNumber,
             sourceBlockHash,
@@ -186,6 +194,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
     function _verifyApprovalSignatures(
         uint256 sourceChainId,
         bytes32 sourceSystemId,
+        bytes32 sourceChannelId,
+        bytes32 sourceTxId,
         address registryAddress,
         uint256 sourceBlockNumber,
         bytes32 sourceBlockHash,
@@ -202,6 +212,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
         bytes32 digest = _approvalDigest(
             sourceChainId,
             sourceSystemId,
+            sourceChannelId,
+            sourceTxId,
             registryAddress,
             sourceBlockNumber,
             sourceBlockHash,
@@ -237,6 +249,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
     function _approvalDigest(
         uint256 sourceChainId,
         bytes32 sourceSystemId,
+        bytes32 sourceChannelId,
+        bytes32 sourceTxId,
         address registryAddress,
         uint256 sourceBlockNumber,
         bytes32 sourceBlockHash,
@@ -251,6 +265,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
                 SOURCE_RECORD_APPROVAL_TYPEHASH,
                 sourceChainId,
                 sourceSystemId,
+                sourceChannelId,
+                sourceTxId,
                 registryAddress,
                 sourceBlockNumber,
                 sourceBlockHash,
@@ -273,6 +289,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
             abi.encode(
                 pkg.sourceChainId,
                 pkg.sourceSystemId,
+                pkg.sourceChannelId,
+                pkg.sourceTxId,
                 pkg.sourceRegistry,
                 pkg.attestationId,
                 pkg.modelFileDigest,
@@ -297,6 +315,8 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
             abi.encode(
                 pkg.sourceChainId,
                 pkg.sourceSystemId,
+                pkg.sourceChannelId,
+                pkg.sourceTxId,
                 pkg.sourceRegistry,
                 pkg.attestationId,
                 pkg.benchmarkDigest,

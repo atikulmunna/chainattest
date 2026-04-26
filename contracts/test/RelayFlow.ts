@@ -40,6 +40,8 @@ function attestationPackageType() {
     uint8 packageType,
     uint256 sourceChainId,
     bytes32 sourceSystemId,
+    bytes32 sourceChannelId,
+    bytes32 sourceTxId,
     address sourceRegistry,
     uint256 sourceBlockNumber,
     bytes32 sourceBlockHash,
@@ -69,6 +71,8 @@ function evalPackageType() {
     uint8 packageType,
     uint256 sourceChainId,
     bytes32 sourceSystemId,
+    bytes32 sourceChannelId,
+    bytes32 sourceTxId,
     address sourceRegistry,
     uint256 sourceBlockNumber,
     bytes32 sourceBlockHash,
@@ -173,6 +177,8 @@ async function signApproval(adapter: any, signer: any, pkg: any, recordHash: str
     SourceRecordApproval: [
       { name: "sourceChainId", type: "uint256" },
       { name: "sourceSystemId", type: "bytes32" },
+      { name: "sourceChannelId", type: "bytes32" },
+      { name: "sourceTxId", type: "bytes32" },
       { name: "registryAddress", type: "address" },
       { name: "sourceBlockNumber", type: "uint256" },
       { name: "sourceBlockHash", type: "bytes32" },
@@ -186,6 +192,8 @@ async function signApproval(adapter: any, signer: any, pkg: any, recordHash: str
   const value = {
     sourceChainId: pkg.sourceChainId,
     sourceSystemId: pkg.sourceSystemId,
+    sourceChannelId: pkg.sourceChannelId,
+    sourceTxId: pkg.sourceTxId,
     registryAddress: pkg.sourceRegistry,
     sourceBlockNumber: pkg.sourceBlockNumber,
     sourceBlockHash: pkg.sourceBlockHash,
@@ -210,6 +218,8 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
     EvalClaimAttestation: [
       { name: "sourceChainId", type: "uint256" },
       { name: "sourceSystemId", type: "bytes32" },
+      { name: "sourceChannelId", type: "bytes32" },
+      { name: "sourceTxId", type: "bytes32" },
       { name: "sourceRegistry", type: "address" },
       { name: "attestationId", type: "uint256" },
       { name: "benchmarkDigest", type: "bytes32" },
@@ -237,6 +247,8 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
   const value = {
     sourceChainId: pkg.sourceChainId,
     sourceSystemId: pkg.sourceSystemId,
+    sourceChannelId: pkg.sourceChannelId,
+    sourceTxId: pkg.sourceTxId,
     sourceRegistry: pkg.sourceRegistry,
     attestationId: pkg.attestationId,
     benchmarkDigest: pkg.benchmarkDigest,
@@ -319,6 +331,8 @@ describe("RelayFlow", function () {
       packageType: 0,
       sourceChainId: 11155111n,
       sourceSystemId: ethers.ZeroHash,
+      sourceChannelId: ethers.ZeroHash,
+      sourceTxId: ethers.ZeroHash,
       sourceRegistry: deployer.address,
       sourceBlockNumber: 12345n,
       sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("source-block")),
@@ -395,6 +409,8 @@ describe("RelayFlow", function () {
       packageType: 2,
       sourceChainId: 11155111n,
       sourceSystemId: ethers.ZeroHash,
+      sourceChannelId: ethers.ZeroHash,
+      sourceTxId: ethers.ZeroHash,
       sourceRegistry: deployer.address,
       sourceBlockNumber: 12350n,
       sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("eval-block")),
@@ -608,11 +624,15 @@ describe("RelayFlow", function () {
   it("verifies a permissioned-source attestation and eval package end-to-end", async function () {
     const fixture = await deployFixture(ethers.id("fabric-committee-v1"));
     const sourceSystemId = ethers.id("fabric:org1:model-registry");
+    const sourceChannelId = ethers.id("fabric-channel:ml-governance");
+    const sourceTxId = ethers.id("fabric-tx:attestation-42");
     const sourceRegistry = normalizedExternalRegistry(sourceSystemId);
 
     const attPkg = await buildSignedAttestationPackage(fixture, {
       sourceChainId: 424242n,
       sourceSystemId,
+      sourceChannelId,
+      sourceTxId,
       sourceRegistry,
       sourceBlockNumber: 8801n,
       sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("fabric-block-8801")),
@@ -636,6 +656,8 @@ describe("RelayFlow", function () {
       packageOverrides: {
         sourceChainId: attPkg.sourceChainId,
         sourceSystemId,
+        sourceChannelId,
+        sourceTxId: ethers.id("fabric-tx:eval-42-benchmark-1"),
         sourceRegistry,
         sourceBlockNumber: 8802n,
         sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("fabric-block-8802")),

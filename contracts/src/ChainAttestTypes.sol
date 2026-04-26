@@ -26,6 +26,8 @@ library ChainAttestTypes {
         uint8 packageType;
         uint256 sourceChainId;
         bytes32 sourceSystemId;
+        bytes32 sourceChannelId;
+        bytes32 sourceTxId;
         address sourceRegistry;
         uint256 sourceBlockNumber;
         bytes32 sourceBlockHash;
@@ -53,6 +55,8 @@ library ChainAttestTypes {
         uint8 packageType;
         uint256 sourceChainId;
         bytes32 sourceSystemId;
+        bytes32 sourceChannelId;
+        bytes32 sourceTxId;
         address sourceRegistry;
         uint256 sourceBlockNumber;
         bytes32 sourceBlockHash;
