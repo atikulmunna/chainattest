@@ -42,7 +42,7 @@ The current design is easiest to understand as four layers.
 
 ### 2. Source Authenticity
 
-`CommitteeAuthAdapter` verifies committee approvals over typed source-record packages after a configured finality window. This keeps source-authenticity logic separate from proof semantics.
+`CommitteeAuthAdapter` verifies committee approvals over typed source-record packages after a configured finality window. `FabricCommitteeAuthAdapter` specializes that model for permissioned Fabric-style sources by requiring nonzero `sourceSystemId`, `sourceChannelId`, and `sourceTxId`. This keeps source-authenticity logic separate from proof semantics while making the heterogeneous path explicit.
 
 ### 3. Destination Semantic Verification
 
@@ -55,6 +55,7 @@ The destination verifier stack checks:
 - structured transcript consistency, including batch summary digests and derived score checks
 - replay protection and public-signal consistency
 - normalized permissioned-source identities via `sourceSystemId`, `sourceChannelId`, `sourceTxId`, and deterministic synthetic registry addresses
+- permissioned-source revocation handling for both attestation and evaluation claims
 
 ### 4. Operational Orchestration
 
@@ -172,6 +173,7 @@ In `fabric` mode, the demo additionally emits:
 - explicit `sourceChannelId`
 - explicit `sourceTxId`
 - a deterministic synthetic `sourceRegistry` derived from `sourceSystemId`
+- a destination fixture deployed with the dedicated `FabricCommitteeAuthAdapter`
 
 ## Demo Outputs
 

@@ -565,20 +565,22 @@ interface IEvalThresholdVerifier {
 1. decode package
 2. check package version
 3. verify committee adapter result
-4. verify semantic proof
-5. enforce consistency between package fields and proof inputs
-6. enforce replay protection
-7. store normalized verified record
+4. if `packageType == ATTESTATION_REVOKE`, mark the existing verified attestation revoked and emit a revocation event
+5. otherwise verify semantic proof
+6. enforce consistency between package fields and proof inputs
+7. enforce replay protection
+8. store normalized verified record
 
 `verifyEvalClaimPackage` must:
 
 1. decode package
 2. check corresponding attestation already verified and not revoked
 3. verify committee adapter result
-4. verify evaluation proof
-5. enforce consistency between package fields and proof inputs
-6. enforce replay protection
-7. store normalized verified evaluation record
+4. if `packageType == EVAL_CLAIM_REVOKE`, mark the existing verified eval claim revoked and emit a revocation event
+5. otherwise verify evaluation proof
+6. enforce consistency between package fields and proof inputs
+7. enforce replay protection
+8. store normalized verified evaluation record
 
 ### 6.5 Destination Storage Keys
 
@@ -637,6 +639,17 @@ struct CommitteeConfig {
     bool active;
 }
 ```
+
+The current prototype includes two concrete adapter deployments:
+
+- `committee-v1` for EVM-native sources
+- `fabric-committee-v1` for Fabric-style permissioned sources
+
+`fabric-committee-v1` additionally requires:
+
+- `sourceSystemId != 0`
+- `sourceChannelId != 0`
+- `sourceTxId != 0`
 
 ### 7.3 Committee Approval Message
 
@@ -1372,6 +1385,7 @@ The current demo runner supports:
 - `--source-mode fabric`
 
 The `fabric` mode emits nonzero `sourceSystemId`, `sourceChannelId`, and `sourceTxId` fields together with a deterministic synthetic `sourceRegistry`.
+It also deploys the dedicated `FabricCommitteeAuthAdapter`.
 
 ### 11.8 Future Service API
 
