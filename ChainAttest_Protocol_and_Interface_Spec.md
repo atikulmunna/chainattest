@@ -99,6 +99,7 @@ The implementation must use these normalized identifiers consistently:
 
 - `attestationId`
 - `sourceChainId`
+- `sourceSystemId`
 - `sourceRegistry`
 - `sourceBlockNumber`
 - `weightsRoot`
@@ -213,7 +214,7 @@ Constraints:
 
 The transcript digest carried by eval packages must not be an opaque hash with no stated semantics.
 
-For the current structured transcript format, the destination verifier recomputes:
+For the current batch-aware transcript summary format, the destination verifier recomputes:
 
 ```text
 evalTranscriptDigest = keccak256(abi.encode(
@@ -223,7 +224,12 @@ evalTranscriptDigest = keccak256(abi.encode(
   inferenceConfigDigest,
   randomnessSeedDigest,
   transcriptSampleCount,
-  transcriptVersion
+  transcriptVersion,
+  batchCount,
+  batchResultsDigest,
+  correctCount,
+  incorrectCount,
+  abstainCount
 ))
 ```
 
@@ -231,8 +237,12 @@ Requirements:
 
 - `transcriptSampleCount > 0`
 - `transcriptVersion` identifies the schema version for the transcript summary
+- `batchCount > 0`
+- `batchResultsDigest != 0`
+- `correctCount + incorrectCount + abstainCount == transcriptSampleCount`
 - the evaluator statement must cover the same transcript fields
 - eval packages must also carry `evaluatorPolicyDigest` and `evaluatorPolicyVersion` so the evaluator attests to a concrete scoring policy
+- the current implementation uses a fixed-width batch-summary circuit with support for up to 4 batch slots
 
 ---
 
@@ -265,6 +275,11 @@ interface IModelRegistry {
         bytes32 randomnessSeedDigest;
         uint32 transcriptSampleCount;
         uint32 transcriptVersion;
+        uint32 batchCount;
+        bytes32 batchResultsDigest;
+        uint32 correctCount;
+        uint32 incorrectCount;
+        uint32 abstainCount;
         uint256 scoreCommitment;
         uint32 thresholdBps;
         address evaluator;
@@ -316,6 +331,11 @@ interface IModelRegistry {
         bytes32 randomnessSeedDigest,
         uint32 transcriptSampleCount,
         uint32 transcriptVersion,
+        uint32 batchCount,
+        bytes32 batchResultsDigest,
+        uint32 correctCount,
+        uint32 incorrectCount,
+        uint32 abstainCount,
         uint256 scoreCommitment,
         uint32 thresholdBps,
         address evaluator,
@@ -385,6 +405,9 @@ interface IModelRegistry {
 - `randomnessSeedDigest == 0`
 - `transcriptSampleCount == 0`
 - `transcriptVersion == 0`
+- `batchCount == 0`
+- `batchResultsDigest == 0`
+- `correctCount + incorrectCount + abstainCount != transcriptSampleCount`
 - `scoreCommitment == 0`
 - `thresholdBps > 10000`
 - `evaluator == 0`
@@ -702,13 +725,14 @@ uint256[5] publicSignals
 
 ### 8.2 Evaluation Proof Public Inputs
 
-The public inputs for `eval_threshold.circom` `eval-v1` shall be:
+The public inputs for `eval_threshold.circom` `eval-v3` shall be:
 
 ```text
 [
   attestationId,
   field(benchmarkDigest),
   field(evalTranscriptDigest),
+  field(batchResultsDigest),
   scoreCommitment,
   thresholdBps,
   evalCircuitVersion
@@ -718,7 +742,7 @@ The public inputs for `eval_threshold.circom` `eval-v1` shall be:
 Recommended destination calldata representation:
 
 ```solidity
-uint256[6] publicSignals
+uint256[7] publicSignals
 ```
 
 ### 8.3 Public Input Consistency Checks
@@ -730,8 +754,10 @@ The destination verifier must explicitly check:
 - `publicSignals[3] == package.attestationCommitment` for semantic packages
 - `publicSignals[1] == field(package.benchmarkDigest)` for eval packages
 - `publicSignals[2] == field(package.evalTranscriptDigest)` for eval packages
-- `publicSignals[3] == package.scoreCommitment` for eval packages
-- `publicSignals[4] == package.thresholdBps` for eval packages
+- `publicSignals[3] == field(package.batchResultsDigest)` for eval packages
+- `publicSignals[4] == package.scoreCommitment` for eval packages
+- `publicSignals[5] == package.thresholdBps` for eval packages
+- `publicSignals[6] == package.evalCircuitVersion` for eval packages
 
 ### 8.4 Off-Chain Proof Validation
 
@@ -746,6 +772,13 @@ Before submission, the coordinator should verify proofs off-chain using the same
 The on-chain verifier accepts `bytes packageData`.
 
 Off-chain representation uses JSON for transport and debugging, then ABI-encodes the normalized package struct for on-chain submission.
+
+For permissioned or non-EVM source ledgers, the package must carry:
+
+- `sourceSystemId`: a stable `bytes32` identifier for the external registry or ledger namespace
+- `sourceRegistry`: a deterministic synthetic EVM address derived from `sourceSystemId`
+
+This allows destination contracts to key verified state consistently while still distinguishing EVM-native sources from permissioned external registries.
 
 ### 9.2 Attestation Relay Package JSON
 
@@ -810,9 +843,23 @@ Off-chain representation uses JSON for transport and debugging, then ABI-encodes
     "attestation_id": "42",
     "benchmark_digest": "0x...",
     "eval_transcript_digest": "0x...",
+    "dataset_split_digest": "0x...",
+    "inference_config_digest": "0x...",
+    "randomness_seed_digest": "0x...",
+    "transcript_sample_count": 100,
+    "transcript_version": 2,
+    "batch_count": 4,
+    "batch_results_digest": "0x...",
+    "correct_count": 92,
+    "incorrect_count": 8,
+    "abstain_count": 0,
     "score_commitment": "4567890123",
     "threshold_bps": 9000,
+    "evaluator": "0xEvaluator",
     "evaluator_key_id": "0x...",
+    "evaluator_policy_digest": "0x...",
+    "evaluator_policy_version": 1,
+    "evaluator_signature": "0x...",
     "claimed_at_block": "123500"
   },
   "adapter": {
@@ -826,8 +873,8 @@ Off-chain representation uses JSON for transport and debugging, then ABI-encodes
     ]
   },
   "proof": {
-    "eval_circuit_version": 1,
-    "public_signals": ["42", "11", "22", "4567890123", "9000", "1"],
+    "eval_circuit_version": 3,
+    "public_signals": ["42", "11", "22", "33", "4567890123", "9000", "3"],
     "groth16": {
       "pA": ["0", "0"],
       "pB": [["0", "0"], ["0", "0"]],
@@ -855,6 +902,7 @@ struct AttestationRelayPackage {
     uint16 packageVersion;
     uint8 packageType;
     uint256 sourceChainId;
+    bytes32 sourceSystemId;
     address sourceRegistry;
     uint256 sourceBlockNumber;
     bytes32 sourceBlockHash;
@@ -886,6 +934,7 @@ struct EvalRelayPackage {
     uint16 packageVersion;
     uint8 packageType;
     uint256 sourceChainId;
+    bytes32 sourceSystemId;
     address sourceRegistry;
     uint256 sourceBlockNumber;
     bytes32 sourceBlockHash;
@@ -897,6 +946,11 @@ struct EvalRelayPackage {
     bytes32 randomnessSeedDigest;
     uint32 transcriptSampleCount;
     uint32 transcriptVersion;
+    uint32 batchCount;
+    bytes32 batchResultsDigest;
+    uint32 correctCount;
+    uint32 incorrectCount;
+    uint32 abstainCount;
     uint256 scoreCommitment;
     uint32 thresholdBps;
     address evaluator;
@@ -911,7 +965,7 @@ struct EvalRelayPackage {
     bytes[] signatures;
     uint32 evalCircuitVersion;
     Groth16Proof proof;
-    uint256[6] publicSignals;
+    uint256[7] publicSignals;
 }
 ```
 
@@ -1011,6 +1065,9 @@ Inputs:
 - `--randomness-seed-digest`
 - `--transcript-sample-count`
 - `--transcript-version`
+- `--batch-correct-counts`
+- `--batch-incorrect-counts`
+- `--batch-abstain-counts`
 - `--threshold-bps`
 - `--evaluator`
 - `--evaluator-policy-digest`
@@ -1021,6 +1078,10 @@ Outputs:
 
 - evaluation claim manifest JSON containing:
   - structured transcript digests
+  - `batch_count`
+  - `batch_results_digest`
+  - per-batch summary arrays
+  - derived aggregate counts
   - computed `eval_transcript_digest`
   - evaluator identity fields
   - threshold and policy metadata
@@ -1040,8 +1101,12 @@ Outputs:
   - `attestation_id`
   - `benchmark_digest_field`
   - `eval_transcript_digest_field`
+  - `batch_results_digest_field`
   - `score_commitment`
   - `threshold_bps`
+  - `batch_count`
+  - padded per-batch summary arrays
+  - aggregate transcript counts
   - `exact_score`
   - `salt`
 
@@ -1360,7 +1425,7 @@ MVP version identifiers:
 - package version: `relay-v1`
 - field normalization version: `field_norm_v1`
 - semantic circuit version: `sem-v1`
-- eval circuit version: `eval-v1`
+- eval circuit version: `eval-v3`
 - adapter version: `committee-v1`
 
 ### 14.2 Breaking Changes
