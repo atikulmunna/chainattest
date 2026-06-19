@@ -14,7 +14,12 @@ import unittest
 from urllib import request as urllib_request
 from urllib import error as urllib_error
 
-from coordinator.chainattest_coordinator.service import AttestationBundleRequest, CoordinatorService, EvalBundleRequest
+from coordinator.chainattest_coordinator.service import (
+    AttestationBundleRequest,
+    CoordinatorService,
+    EvalBundleRequest,
+    RevocationBundleRequest,
+)
 from committee.signer_service.signer import HttpSignerClient
 
 
@@ -478,6 +483,115 @@ class DestinationSubmissionTests(unittest.TestCase):
             }
         )
         self.assertTrue(verification["verified"])
+
+    def test_orchestrates_permissioned_source_revocations_end_to_end(self) -> None:
+        fabric_fixture = run_bridge(
+            {
+                "action": "deploy_destination_fixture",
+                "rpcUrl": self.rpc_url,
+                "privateKey": DEPLOYER_PRIVATE_KEY,
+                "adapterKind": "fabric",
+                "adapterId": ADAPTER_ID,
+                "committeeThreshold": 2,
+                "committeeSigners": self.committee_addresses,
+                "authorizedEvaluators": [self.evaluator_address],
+            }
+        )
+        source_registry = normalized_external_registry(FABRIC_SOURCE_SYSTEM_ID)
+
+        attestation_request = self._attestation_request()
+        attestation_request.source_chain_id = 424242
+        attestation_request.source_system_id = FABRIC_SOURCE_SYSTEM_ID
+        attestation_request.source_channel_id = FABRIC_CHANNEL_ID
+        attestation_request.source_tx_id = FABRIC_ATTESTATION_TX_ID
+        attestation_request.source_registry = source_registry
+        attestation_request.source_block_number = 8801
+        attestation_request.source_block_hash = "0x" + "ab" * 32
+        attestation_request.adapter_id = fabric_fixture["adapterId"]
+        attestation_request.destination_verifier_address = fabric_fixture["semanticVerifier"]
+        attestation_request.committee_verifier_address = fabric_fixture["committeeAuthAdapter"]
+        attestation_result = self.service.orchestrate_attestation(attestation_request)
+        self.assertEqual(attestation_result["submission"]["state"], "completed")
+
+        eval_request = self._eval_request()
+        eval_request.source_chain_id = 424242
+        eval_request.source_system_id = FABRIC_SOURCE_SYSTEM_ID
+        eval_request.source_channel_id = FABRIC_CHANNEL_ID
+        eval_request.source_tx_id = FABRIC_EVAL_TX_ID
+        eval_request.source_registry = source_registry
+        eval_request.source_block_number = 8802
+        eval_request.source_block_hash = "0x" + "cd" * 32
+        eval_request.claimed_at_block = 8802
+        eval_request.adapter_id = fabric_fixture["adapterId"]
+        eval_request.destination_verifier_address = fabric_fixture["evalThresholdVerifier"]
+        eval_request.committee_verifier_address = fabric_fixture["committeeAuthAdapter"]
+        eval_request.eval_verifier_address = fabric_fixture["evalThresholdVerifier"]
+        eval_result = self.service.orchestrate_eval(eval_request)
+        self.assertEqual(eval_result["submission"]["state"], "completed")
+
+        eval_revoke = self.service.orchestrate_eval_revoke(
+            RevocationBundleRequest(
+                registered_package_path=Path(eval_result["bundle"]["package_path"]),
+                source_tx_id="0x" + "dd" * 32,
+                source_block_number=8803,
+                source_block_hash="0x" + "de" * 32,
+                output_dir=self.temp_dir / "eval-revoke",
+                destination_chain_id=int(fabric_fixture["chainId"]),
+                destination_rpc_url=self.rpc_url,
+                destination_submitter_private_key=DEPLOYER_PRIVATE_KEY,
+                destination_submitter_key_env=SUBMITTER_ENV,
+                destination_verifier_address=fabric_fixture["evalThresholdVerifier"],
+                committee_verifier_address=fabric_fixture["committeeAuthAdapter"],
+                committee_private_keys=COMMITTEE_PRIVATE_KEYS,
+                committee_threshold=2,
+            )
+        )
+        self.assertEqual(eval_revoke["submission"]["state"], "completed")
+
+        eval_revoke_package = json.loads(Path(eval_revoke["bundle"]["package_path"]).read_text())
+        eval_verification = run_bridge(
+            {
+                "action": "query_destination_verification",
+                "rpcUrl": self.rpc_url,
+                "packageKind": "eval",
+                "verifierAddress": fabric_fixture["evalThresholdVerifier"],
+                "package": eval_revoke_package,
+            }
+        )
+        self.assertFalse(eval_verification["verified"])
+        self.assertTrue(eval_verification["record"]["revoked"])
+
+        attestation_revoke = self.service.orchestrate_attestation_revoke(
+            RevocationBundleRequest(
+                registered_package_path=Path(attestation_result["bundle"]["package_path"]),
+                source_tx_id="0x" + "ee" * 32,
+                source_block_number=8804,
+                source_block_hash="0x" + "ef" * 32,
+                output_dir=self.temp_dir / "attestation-revoke",
+                destination_chain_id=int(fabric_fixture["chainId"]),
+                destination_rpc_url=self.rpc_url,
+                destination_submitter_private_key=DEPLOYER_PRIVATE_KEY,
+                destination_submitter_key_env=SUBMITTER_ENV,
+                destination_verifier_address=fabric_fixture["semanticVerifier"],
+                committee_verifier_address=fabric_fixture["committeeAuthAdapter"],
+                committee_private_keys=COMMITTEE_PRIVATE_KEYS,
+                committee_threshold=2,
+            )
+        )
+        self.assertEqual(attestation_revoke["submission"]["state"], "completed")
+
+        attestation_revoke_package = json.loads(Path(attestation_revoke["bundle"]["package_path"]).read_text())
+        attestation_verification = run_bridge(
+            {
+                "action": "query_destination_verification",
+                "rpcUrl": self.rpc_url,
+                "packageKind": "attestation",
+                "verifierAddress": fabric_fixture["semanticVerifier"],
+                "package": attestation_revoke_package,
+            }
+        )
+        self.assertFalse(attestation_verification["verified"])
+        self.assertTrue(attestation_verification["record"]["revoked"])
 
     def test_recovers_submitted_job_after_restart(self) -> None:
         result = self.service.orchestrate_attestation(self._attestation_request(), wait_for_receipt=False)
