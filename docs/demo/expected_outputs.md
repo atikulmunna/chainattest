@@ -11,6 +11,8 @@
 - benchmark timings
 - artifact paths
 
+For the Fabric-specific path, the same structure should be produced under `artifacts/demo-fabric-paper/`.
+
 ## Benchmark Table
 
 `artifacts/demo/benchmark_summary.md` should contain:

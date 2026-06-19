@@ -14,4 +14,4 @@ ChainAttest is a research prototype for moving machine-learning attestations acr
 
 ## Prototype Claim
 
-The current prototype demonstrates a credible EVM-to-EVM destination-verification stack with reproducible orchestration, signer isolation, and local demo automation.
+The current prototype demonstrates a credible destination-verification stack with reproducible orchestration, signer isolation, local demo automation, and an implemented Fabric-style permissioned-to-public relay path.

@@ -1,0 +1,28 @@
+flowchart LR
+    subgraph Fabric["Permissioned Source"]
+        A["Fabric model registry"]
+        B["Attestation / eval source records"]
+        C["sourceSystemId / sourceChannelId / sourceTxId"]
+        A --> B --> C
+    end
+
+    subgraph Relay["Relay And Proof Layer"]
+        D["Coordinator"]
+        E["Groth16 circuits"]
+        F["HTTP signer service"]
+        G["Committee-authenticated relay package"]
+        D --> E
+        D --> F
+        E --> G
+        F --> G
+    end
+
+    subgraph Public["Public Destination"]
+        H["FabricCommitteeAuthAdapter"]
+        I["SemanticVerifier / EvalThresholdVerifier"]
+        J["Public verification record"]
+        H --> I --> J
+    end
+
+    C --> D
+    G --> H

@@ -18,6 +18,12 @@ Run a complete local ChainAttest flow that:
 python scripts/run_demo.py --output-root artifacts/demo
 ```
 
+For the permissioned-to-public research path:
+
+```bash
+python scripts/run_demo.py --source-mode fabric --output-root artifacts/demo-fabric-paper
+```
+
 ## Optional Reuse Flags
 
 ```bash

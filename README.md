@@ -202,6 +202,32 @@ python coordinator/chainattest_coordinator/ops.py retry-failed --db-path coordin
 python coordinator/chainattest_coordinator/ops.py tail-audit --db-path coordinator/state/chainattest.db --limit 25
 ```
 
+Revocation is now operator-driven too. Starting from an already rendered package, operators can build, sign, and optionally submit revoke packages without manually editing JSON:
+
+```bash
+python coordinator/chainattest_coordinator/ops.py revoke-attestation artifacts/demo-fabric-paper/attestation/attestation_package.json \
+  --source-tx-id 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --source-block-number 8804 \
+  --source-block-hash 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  --output-dir artifacts/demo-fabric-paper/attestation-revoke \
+  --destination-chain-id 31337 \
+  --committee-verifier-address <committee-adapter> \
+  --destination-verifier-address <semantic-verifier> \
+  --committee-key-envs CHAINATTEST_DEMO_COMMITTEE_KEY_1,CHAINATTEST_DEMO_COMMITTEE_KEY_2 \
+  --destination-submitter-key-env CHAINATTEST_DEMO_SUBMITTER_KEY
+
+python coordinator/chainattest_coordinator/ops.py revoke-eval artifacts/demo-fabric-paper/eval/eval_package.json \
+  --source-tx-id 0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  --source-block-number 8803 \
+  --source-block-hash 0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+  --output-dir artifacts/demo-fabric-paper/eval-revoke \
+  --destination-chain-id 31337 \
+  --committee-verifier-address <committee-adapter> \
+  --destination-verifier-address <eval-verifier> \
+  --committee-key-envs CHAINATTEST_DEMO_COMMITTEE_KEY_1,CHAINATTEST_DEMO_COMMITTEE_KEY_2 \
+  --destination-submitter-key-env CHAINATTEST_DEMO_SUBMITTER_KEY
+```
+
 Legacy JSON state and JSONL audit files are still written as compatibility shadows, but SQLite is the authoritative store.
 
 ## Signer Modes
@@ -257,6 +283,8 @@ GitHub Actions currently covers:
 
 - `docs/figures/architecture.mmd`
 - `docs/figures/demo_flow.mmd`
+- `docs/figures/fabric_public_path.mmd`
+- `docs/figures/fabric_public_lifecycle.mmd`
 
 ## Known Prototype Limits
 

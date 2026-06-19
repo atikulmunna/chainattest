@@ -1,0 +1,8 @@
+flowchart TD
+    A["Fabric attestation transaction"] --> B["Attestation package verified on Ethereum"]
+    B --> C["Fabric evaluation transaction"]
+    C --> D["Eval claim verified on Ethereum"]
+    D --> E["Fabric eval revocation transaction"]
+    E --> F["Eval claim marked revoked"]
+    F --> G["Fabric attestation revocation transaction"]
+    G --> H["Attestation marked revoked"]
