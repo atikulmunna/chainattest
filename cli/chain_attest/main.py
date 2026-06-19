@@ -315,6 +315,28 @@ def load_optional_json(path: Path | None) -> Any:
     return load_json(path)
 
 
+def zero_groth16_proof() -> dict[str, Any]:
+    return {
+        "pA": ["0", "0"],
+        "pB": [["0", "0"], ["0", "0"]],
+        "pC": ["0", "0"],
+    }
+
+
+def zero_public_signals(length: int) -> list[str]:
+    return ["0"] * length
+
+
+def load_registered_package(path: Path, expected_type: int, package_name: str) -> dict[str, Any]:
+    package = load_json(path)
+    actual_type = package.get("packageType")
+    if actual_type != expected_type:
+        raise typer.BadParameter(
+            f"{package_name} must reference a package with packageType {expected_type}, got {actual_type}"
+        )
+    return package
+
+
 def normalize_groth16_proof(proof: Any) -> Any:
     if proof is None:
         return None
@@ -389,6 +411,30 @@ def render_attestation_package(
     print(f"[green]Wrote attestation relay package to[/green] {output}")
 
 
+@app.command("render-attestation-revoke-package")
+def render_attestation_revoke_package(
+    registered_package: Path = typer.Option(..., help="Previously rendered attestation package JSON"),
+    source_tx_id: str = typer.Option(..., help="Revocation source transaction id as bytes32 hex"),
+    source_block_number: int = typer.Option(..., help="Revocation source block number"),
+    source_block_hash: str = typer.Option(..., help="Revocation source block hash as bytes32 hex"),
+    signatures_file: Path | None = typer.Option(None, help="Optional committee signature JSON"),
+    output: Path = typer.Option(..., help="Output revoke package JSON"),
+) -> None:
+    package = load_registered_package(registered_package, 0, "registered-package")
+    revoke_package = {
+        **package,
+        "packageType": 1,
+        "sourceTxId": source_tx_id,
+        "sourceBlockNumber": str(source_block_number),
+        "sourceBlockHash": source_block_hash,
+        "signatures": load_optional_json(signatures_file) or [],
+        "proof": zero_groth16_proof(),
+        "publicSignals": zero_public_signals(5),
+    }
+    dump_json(output, revoke_package)
+    print(f"[green]Wrote attestation revoke package to[/green] {output}")
+
+
 @app.command("render-eval-package")
 def render_eval_package(
     manifest: Path = typer.Option(..., help="Eval claim manifest JSON"),
@@ -456,6 +502,31 @@ def render_eval_package(
     }
     dump_json(output, package)
     print(f"[green]Wrote eval relay package to[/green] {output}")
+
+
+@app.command("render-eval-revoke-package")
+def render_eval_revoke_package(
+    registered_package: Path = typer.Option(..., help="Previously rendered eval package JSON"),
+    source_tx_id: str = typer.Option(..., help="Revocation source transaction id as bytes32 hex"),
+    source_block_number: int = typer.Option(..., help="Revocation source block number"),
+    source_block_hash: str = typer.Option(..., help="Revocation source block hash as bytes32 hex"),
+    signatures_file: Path | None = typer.Option(None, help="Optional committee signature JSON"),
+    output: Path = typer.Option(..., help="Output revoke package JSON"),
+) -> None:
+    package = load_registered_package(registered_package, 2, "registered-package")
+    revoke_package = {
+        **package,
+        "packageType": 3,
+        "sourceTxId": source_tx_id,
+        "sourceBlockNumber": str(source_block_number),
+        "sourceBlockHash": source_block_hash,
+        "signatures": load_optional_json(signatures_file) or [],
+        "evaluatorSignature": "0x",
+        "proof": zero_groth16_proof(),
+        "publicSignals": zero_public_signals(7),
+    }
+    dump_json(output, revoke_package)
+    print(f"[green]Wrote eval revoke package to[/green] {output}")
 
 
 @app.command("query-attestation")

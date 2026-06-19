@@ -157,6 +157,31 @@ class EvalBundleRequest:
 
 
 @dataclass
+class RevocationBundleRequest:
+    registered_package_path: Path
+    source_tx_id: str
+    source_block_number: int
+    source_block_hash: str
+    output_dir: Path
+    destination_chain_id: int | None = None
+    destination_rpc_url: str | None = None
+    destination_submitter_private_key: str | None = None
+    destination_submitter_key_env: str | None = None
+    signer_service_url: str | None = None
+    signer_service_token_env: str | None = None
+    destination_submitter_command: list[str] = field(default_factory=list)
+    destination_submitter_auth_token_env: str | None = None
+    destination_verifier_address: str | None = None
+    committee_verifier_address: str | None = None
+    committee_private_keys: list[str] = field(default_factory=list)
+    committee_key_envs: list[str] = field(default_factory=list)
+    committee_signer_command: list[str] = field(default_factory=list)
+    committee_signer_auth_token_env: str | None = None
+    committee_threshold: int | None = None
+    signatures_file: Path | None = None
+
+
+@dataclass
 class CoordinatorStatus:
     status: str = "idle"
     queue_depth: int = 0
@@ -314,6 +339,92 @@ class CoordinatorService:
         poll_interval_seconds: float = 1.0,
     ) -> dict:
         bundle = self.prepare_eval_bundle(request)
+        submission = None
+        if self._can_submit_destination(
+            request.destination_rpc_url,
+            request.destination_submitter_private_key,
+            request.destination_submitter_key_env,
+            request.destination_submitter_command,
+            request.destination_verifier_address,
+        ):
+            submitter_secret_ref = self._register_secret_ref(
+                job_key=str(bundle["job"]["job_id"]),
+                secret=request.destination_submitter_private_key,
+                env_name=request.destination_submitter_key_env,
+                purpose="destination_submitter",
+            )
+            submission = self.submit_package(
+                SubmissionRequest(
+                    package_path=Path(bundle["package_path"]),
+                    package_kind="eval",
+                    destination_rpc_url=request.destination_rpc_url,
+                    destination_verifier_address=request.destination_verifier_address,
+                    destination_submitter_secret_ref=submitter_secret_ref,
+                    signer_service_url=request.signer_service_url,
+                    signer_service_token_env=request.signer_service_token_env,
+                    destination_submitter_command=request.destination_submitter_command,
+                    destination_submitter_auth_token_env=request.destination_submitter_auth_token_env,
+                    wait_for_receipt=wait_for_receipt,
+                    receipt_timeout_seconds=receipt_timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                )
+            )
+        return {
+            "bundle": bundle,
+            "submission": submission,
+        }
+
+    def orchestrate_attestation_revoke(
+        self,
+        request: RevocationBundleRequest,
+        wait_for_receipt: bool = True,
+        receipt_timeout_seconds: float = 30.0,
+        poll_interval_seconds: float = 1.0,
+    ) -> dict:
+        bundle = self.prepare_attestation_revoke_bundle(request)
+        submission = None
+        if self._can_submit_destination(
+            request.destination_rpc_url,
+            request.destination_submitter_private_key,
+            request.destination_submitter_key_env,
+            request.destination_submitter_command,
+            request.destination_verifier_address,
+        ):
+            submitter_secret_ref = self._register_secret_ref(
+                job_key=str(bundle["job"]["job_id"]),
+                secret=request.destination_submitter_private_key,
+                env_name=request.destination_submitter_key_env,
+                purpose="destination_submitter",
+            )
+            submission = self.submit_package(
+                SubmissionRequest(
+                    package_path=Path(bundle["package_path"]),
+                    package_kind="attestation",
+                    destination_rpc_url=request.destination_rpc_url,
+                    destination_verifier_address=request.destination_verifier_address,
+                    destination_submitter_secret_ref=submitter_secret_ref,
+                    signer_service_url=request.signer_service_url,
+                    signer_service_token_env=request.signer_service_token_env,
+                    destination_submitter_command=request.destination_submitter_command,
+                    destination_submitter_auth_token_env=request.destination_submitter_auth_token_env,
+                    wait_for_receipt=wait_for_receipt,
+                    receipt_timeout_seconds=receipt_timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                )
+            )
+        return {
+            "bundle": bundle,
+            "submission": submission,
+        }
+
+    def orchestrate_eval_revoke(
+        self,
+        request: RevocationBundleRequest,
+        wait_for_receipt: bool = True,
+        receipt_timeout_seconds: float = 30.0,
+        poll_interval_seconds: float = 1.0,
+    ) -> dict:
+        bundle = self.prepare_eval_revoke_bundle(request)
         submission = None
         if self._can_submit_destination(
             request.destination_rpc_url,
@@ -746,6 +857,22 @@ class CoordinatorService:
             self.fail_job(job.job_id, str(error))
             raise
 
+    def prepare_attestation_revoke_bundle(self, request: RevocationBundleRequest) -> dict:
+        return self._prepare_revoke_bundle(
+            request=request,
+            job_kind="prepare_attestation_revoke_bundle",
+            cli_command="render-attestation-revoke-package",
+            package_filename="attestation_revoke_package.json",
+        )
+
+    def prepare_eval_revoke_bundle(self, request: RevocationBundleRequest) -> dict:
+        return self._prepare_revoke_bundle(
+            request=request,
+            job_kind="prepare_eval_revoke_bundle",
+            cli_command="render-eval-revoke-package",
+            package_filename="eval_revoke_package.json",
+        )
+
     def _refresh_status(self) -> None:
         counts = {
             JobState.QUEUED: 0,
@@ -780,6 +907,83 @@ class CoordinatorService:
             capture_output=True,
             text=True,
         )
+
+    def _prepare_revoke_bundle(
+        self,
+        request: RevocationBundleRequest,
+        job_kind: str,
+        cli_command: str,
+        package_filename: str,
+    ) -> dict:
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        signatures_path = request.signatures_file or request.output_dir / "committee_signatures.json"
+        package_path = request.output_dir / package_filename
+
+        job = self.submit_job(job_kind, request.registered_package_path, package_path)
+        self.start_job(job.job_id)
+
+        try:
+            self._preflight_signer_service(request.signer_service_url, request.signer_service_token_env)
+            render_args = [
+                cli_command,
+                "--registered-package",
+                str(request.registered_package_path),
+                "--source-tx-id",
+                request.source_tx_id,
+                "--source-block-number",
+                str(request.source_block_number),
+                "--source-block-hash",
+                request.source_block_hash,
+                "--output",
+                str(package_path),
+            ]
+            self._run_cli(*render_args)
+
+            if request.signatures_file is None:
+                signatures_output = self._collect_committee_signatures(
+                    package_path=package_path,
+                    output_path=signatures_path,
+                    destination_chain_id=request.destination_chain_id,
+                    verifier_address=request.committee_verifier_address,
+                    private_keys=request.committee_private_keys,
+                    key_envs=request.committee_key_envs,
+                    signer_service_url=request.signer_service_url,
+                    signer_service_token_env=request.signer_service_token_env,
+                    signer_command=request.committee_signer_command,
+                    signer_auth_token_env=request.committee_signer_auth_token_env,
+                    threshold=request.committee_threshold,
+                )
+            else:
+                signatures_output = request.signatures_file
+
+            if signatures_output is not None:
+                rerender_args = [
+                    cli_command,
+                    "--registered-package",
+                    str(request.registered_package_path),
+                    "--source-tx-id",
+                    request.source_tx_id,
+                    "--source-block-number",
+                    str(request.source_block_number),
+                    "--source-block-hash",
+                    request.source_block_hash,
+                    "--signatures-file",
+                    str(signatures_output),
+                    "--output",
+                    str(package_path),
+                ]
+                self._run_cli(*rerender_args)
+
+            self.complete_job(job.job_id)
+            return {
+                "job": self.get_job(job.job_id),
+                "registered_package_path": str(request.registered_package_path),
+                "signatures_path": str(signatures_output) if signatures_output else None,
+                "package_path": str(package_path),
+            }
+        except Exception as error:
+            self.fail_job(job.job_id, str(error))
+            raise
 
     def _run_bridge(self, payload: dict) -> dict:
         result = subprocess.run(
