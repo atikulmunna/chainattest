@@ -37,20 +37,27 @@ def compute_semantic_root(
     path_elements: list[int],
     path_indices: list[int],
 ) -> int:
-    current = (
-        field_from_hex(model_digest)
-        + field_from_hex(dataset_digest) * 2
-        + field_from_hex(training_digest) * 3
-        + field_from_hex(metadata_digest) * 5
-        + (int(owner, 16) % BN254_FIELD_MODULUS) * 7
-    ) % BN254_FIELD_MODULUS
-
-    for level, (element, index) in enumerate(zip(path_elements, path_indices), start=1):
-        left = (current + (element - current) * index) % BN254_FIELD_MODULUS
-        right = (element + (current - element) * index) % BN254_FIELD_MODULUS
-        current = (left * 17 + right * 31 + level) % BN254_FIELD_MODULUS
-
-    return current
+    # Delegate to the crypto bridge so the Poseidon Merkle root matches the circuit.
+    result = subprocess.run(
+        ["node", str(BRIDGE_ENTRYPOINT)],
+        input=json.dumps(
+            {
+                "action": "semantic_witness",
+                "modelFileDigest": model_digest,
+                "datasetCommitment": dataset_digest,
+                "trainingCommitment": training_digest,
+                "metadataDigest": metadata_digest,
+                "owner": owner,
+                "pathElements": [str(value) for value in path_elements],
+                "pathIndices": [str(value) for value in path_indices],
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=True,
+        cwd=REPO_ROOT,
+    )
+    return int(json.loads(result.stdout)["weightsRoot"])
 
 
 def wallet_address(private_key: str) -> str:
@@ -96,8 +103,8 @@ class CoordinatorServiceTests(unittest.TestCase):
         dataset_path.write_text('{"split":"train"}\n')
 
         owner = "0x1234567890abcdef1234567890abcdef12345678"
-        path_elements = [17, 23]
-        path_indices = [0, 1]
+        path_elements = [101 + offset for offset in range(16)]
+        path_indices = [offset % 2 for offset in range(16)]
         weights_root = compute_semantic_root(
             model_digest=sha256_digest(model_path),
             dataset_digest=sha256_digest(dataset_path),

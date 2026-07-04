@@ -107,56 +107,45 @@ def build_semantic_input(
     indices = parse_csv_ints(path_indices)
     if len(elements) != len(indices):
         raise typer.BadParameter("path-elements and path-indices must have the same length")
-
-    model_field = field_from_hex(record["model_file_digest"])
-    dataset_field = field_from_hex(record["dataset_commitment"])
-    training_field = field_from_hex(record["training_commitment"])
-    metadata_field = field_from_hex(record["metadata_digest"])
-    owner_field = int(record["owner"], 16) % BN254_FIELD_MODULUS
-
-    current = (
-        model_field
-        + dataset_field * 2
-        + training_field * 3
-        + metadata_field * 5
-        + owner_field * 7
-    ) % BN254_FIELD_MODULUS
-
-    for level, (element, index) in enumerate(zip(elements, indices), start=1):
+    for index in indices:
         if index not in (0, 1):
             raise typer.BadParameter("path-indices must be binary values")
-        left = (current + (element - current) * index) % BN254_FIELD_MODULUS
-        right = (element + (current - element) * index) % BN254_FIELD_MODULUS
-        current = (left * 17 + right * 31 + level) % BN254_FIELD_MODULUS
+
+    # The Poseidon leaf and Merkle root are computed by the crypto bridge so the
+    # witness matches the circuit exactly (Python has no matching Poseidon).
+    witness_data = run_bridge(
+        {
+            "action": "semantic_witness",
+            "modelFileDigest": record["model_file_digest"],
+            "datasetCommitment": record["dataset_commitment"],
+            "trainingCommitment": record["training_commitment"],
+            "metadataDigest": record["metadata_digest"],
+            "owner": record["owner"],
+            "attestationId": str(attestation_id),
+            "registeredAtBlock": str(registered_at_block),
+            "pathElements": [str(value) for value in elements],
+            "pathIndices": [str(value) for value in indices],
+        }
+    )
 
     expected_root = int(record["weights_root"])
-    if current != expected_root:
+    computed_root = int(witness_data["weightsRoot"])
+    if computed_root != expected_root:
         raise typer.BadParameter(
-            f"computed weights root {current} does not match manifest weights_root {expected_root}"
+            f"computed weights root {computed_root} does not match manifest weights_root {expected_root}"
         )
-
-    attestation_commitment = (
-        attestation_id
-        + model_field * 3
-        + dataset_field * 5
-        + training_field * 7
-        + metadata_field * 11
-        + owner_field * 13
-        + registered_at_block * 17
-        + expected_root * 19
-    ) % BN254_FIELD_MODULUS
 
     witness = {
         "attestation_id": str(attestation_id),
         "registered_at_block": str(registered_at_block),
         "weights_root": str(expected_root),
-        "attestation_commitment": str(attestation_commitment),
+        "attestation_commitment": witness_data["attestationCommitment"],
         "circuit_version_id": "1",
-        "model_file_digest_field": str(model_field),
-        "dataset_commitment_field": str(dataset_field),
-        "training_commitment_field": str(training_field),
-        "metadata_digest_field": str(metadata_field),
-        "owner_field": str(owner_field),
+        "model_file_digest_field": witness_data["modelFileDigestField"],
+        "dataset_commitment_field": witness_data["datasetCommitmentField"],
+        "training_commitment_field": witness_data["trainingCommitmentField"],
+        "metadata_digest_field": witness_data["metadataDigestField"],
+        "owner_field": witness_data["ownerField"],
         "path_elements": [str(value) for value in elements],
         "path_indices": [str(value) for value in indices],
     }

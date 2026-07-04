@@ -112,19 +112,20 @@ def compute_semantic_root(
     path_elements: list[int],
     path_indices: list[int],
 ) -> int:
-    modulus = 21888242871839275222246405745257275088548364400416034343698204186575808495617
-    current = (
-        (int(model_digest, 16) % modulus)
-        + (int(dataset_digest, 16) % modulus) * 2
-        + (int(training_digest, 16) % modulus) * 3
-        + (int(metadata_digest, 16) % modulus) * 5
-        + (int(owner, 16) % modulus) * 7
-    ) % modulus
-    for level, (element, index) in enumerate(zip(path_elements, path_indices), start=1):
-        left = (current + (element - current) * index) % modulus
-        right = (element + (current - element) * index) % modulus
-        current = (left * 17 + right * 31 + level) % modulus
-    return current
+    # Delegate to the crypto bridge so the Poseidon Merkle root matches the circuit.
+    result = run_bridge(
+        {
+            "action": "semantic_witness",
+            "modelFileDigest": model_digest,
+            "datasetCommitment": dataset_digest,
+            "trainingCommitment": training_digest,
+            "metadataDigest": metadata_digest,
+            "owner": owner,
+            "pathElements": [str(value) for value in path_elements],
+            "pathIndices": [str(value) for value in path_indices],
+        }
+    )
+    return int(result["weightsRoot"])
 
 
 def parse_int(value: str | int | None) -> int | None:
@@ -178,7 +179,13 @@ def main() -> None:
     eval_dir.mkdir(parents=True, exist_ok=True)
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    os.environ[SUBMITTER_ENV] = DEPLOYER_PRIVATE_KEY
+    # For a public-testnet run, override the deployer/submitter key with a fresh,
+    # faucet-funded key via SEPOLIA_DEPLOYER_KEY. The committee/evaluator keys only
+    # sign off-chain (no gas), so they keep their defaults. Falls back to the local
+    # Hardhat account #0 for local devnet runs.
+    deployer_key = os.environ.get("SEPOLIA_DEPLOYER_KEY") or DEPLOYER_PRIVATE_KEY
+
+    os.environ[SUBMITTER_ENV] = deployer_key
     os.environ[COMMITTEE_ENV_1] = COMMITTEE_PRIVATE_KEYS[0]
     os.environ[COMMITTEE_ENV_2] = COMMITTEE_PRIVATE_KEYS[1]
     os.environ[EVALUATOR_ENV] = EVALUATOR_PRIVATE_KEY
@@ -208,7 +215,7 @@ def main() -> None:
             {
                 "action": "deploy_destination_fixture",
                 "rpcUrl": rpc_url,
-                "privateKey": DEPLOYER_PRIVATE_KEY,
+                "privateKey": deployer_key,
                 "adapterKind": "fabric" if args.source_mode == "fabric" else "committee",
                 "adapterId": ADAPTER_ID,
                 "committeeThreshold": 2,
@@ -235,7 +242,7 @@ def main() -> None:
                         ],
                         "allowed_package_kinds": ["attestation", "eval"],
                         "allowed_evaluators": [evaluator_address],
-                        "allowed_submitters": [wallet_address(DEPLOYER_PRIVATE_KEY)],
+                        "allowed_submitters": [wallet_address(deployer_key)],
                     },
                     indent=2,
                 )
@@ -271,7 +278,7 @@ def main() -> None:
         training_path.write_text('{"epochs":5,"optimizer":"adam"}\n')
         dataset_path.write_text('{"split":"train","name":"demo-benchmark"}\n')
 
-        owner = wallet_address(DEPLOYER_PRIVATE_KEY)
+        owner = wallet_address(deployer_key)
         source_system_id = ZERO_BYTES32
         source_channel_id = ZERO_BYTES32
         attestation_source_tx_id = ZERO_BYTES32
@@ -287,8 +294,8 @@ def main() -> None:
                 {"action": "normalized_external_registry", "sourceSystemId": source_system_id}
             )["sourceRegistry"]
             source_chain_id = 424242
-        path_elements = [17, 23]
-        path_indices = [0, 1]
+        path_elements = [101 + offset for offset in range(16)]
+        path_indices = [offset % 2 for offset in range(16)]
         weights_root = compute_semantic_root(
             model_digest=sha256_digest(model_path),
             dataset_digest=sha256_digest(dataset_path),

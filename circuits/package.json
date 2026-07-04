@@ -9,6 +9,9 @@
   },
   "packageManager": "npm@11.12.1",
   "scripts": {
+    "build": "node scripts/build_circuits.js",
+    "build:semantic": "node scripts/build_circuits.js semantic",
+    "build:eval": "node scripts/build_circuits.js eval",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

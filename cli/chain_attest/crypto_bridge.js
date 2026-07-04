@@ -233,6 +233,81 @@ async function computeBatchResultsDigest(batchCorrectCounts, batchIncorrectCount
   };
 }
 
+function parsePathList(values) {
+  if (Array.isArray(values)) {
+    return values.map((value) => BigInt(value));
+  }
+  if (typeof values === "string") {
+    const trimmed = values.trim();
+    if (!trimmed) {
+      return [];
+    }
+    return trimmed.split(",").map((value) => BigInt(value.trim()));
+  }
+  throw new Error("path inputs must be provided as CSV strings or arrays");
+}
+
+async function computeSemanticWitness(payload) {
+  const modulus = BN254_FIELD_MODULUS;
+  const modelField = BigInt(fieldFromHex(payload.modelFileDigest));
+  const datasetField = BigInt(fieldFromHex(payload.datasetCommitment));
+  const trainingField = BigInt(fieldFromHex(payload.trainingCommitment));
+  const metadataField = BigInt(fieldFromHex(payload.metadataDigest));
+  const ownerField = BigInt(payload.owner) % modulus;
+  const attestationId = BigInt(payload.attestationId ?? 0);
+  const registeredAtBlock = BigInt(payload.registeredAtBlock ?? 0);
+
+  const pathElements = parsePathList(payload.pathElements);
+  const pathIndices = parsePathList(payload.pathIndices);
+  if (pathElements.length !== pathIndices.length) {
+    throw new Error("pathElements and pathIndices must have the same length");
+  }
+
+  const poseidon = await circomlibjs.buildPoseidon();
+  const toField = (value) => BigInt(poseidon.F.toString(value));
+
+  const leaf = toField(
+    poseidon([modelField, datasetField, trainingField, metadataField, ownerField])
+  );
+
+  let current = leaf;
+  for (let i = 0; i < pathElements.length; i += 1) {
+    const index = pathIndices[i];
+    if (index !== 0n && index !== 1n) {
+      throw new Error("path indices must be binary values");
+    }
+    const sibling = pathElements[i] % modulus;
+    const left = index === 1n ? sibling : current;
+    const right = index === 1n ? current : sibling;
+    current = toField(poseidon([left, right]));
+  }
+
+  const weightsRoot = current;
+  const attestationCommitment =
+    (attestationId +
+      modelField * 3n +
+      datasetField * 5n +
+      trainingField * 7n +
+      metadataField * 11n +
+      ownerField * 13n +
+      registeredAtBlock * 17n +
+      weightsRoot * 19n) %
+    modulus;
+
+  return {
+    modelFileDigestField: modelField.toString(),
+    datasetCommitmentField: datasetField.toString(),
+    trainingCommitmentField: trainingField.toString(),
+    metadataDigestField: metadataField.toString(),
+    ownerField: ownerField.toString(),
+    leaf: leaf.toString(),
+    weightsRoot: weightsRoot.toString(),
+    attestationCommitment: attestationCommitment.toString(),
+    pathElements: pathElements.map((value) => (value % modulus).toString()),
+    pathIndices: pathIndices.map((value) => value.toString()),
+  };
+}
+
 function normalizeGroth16Proof(proof) {
   if (proof && proof.pA && proof.pB && proof.pC) {
     return proof;
@@ -479,6 +554,11 @@ async function main() {
         scoreCommitment,
       })
     );
+    return;
+  }
+
+  if (payload.action === "semantic_witness") {
+    process.stdout.write(JSON.stringify(await computeSemanticWitness(payload)));
     return;
   }
 
