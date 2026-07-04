@@ -7,8 +7,16 @@
  * the threshold-signature layer scales predictably (roughly one ecrecover per extra
  * signature) rather than only working at the demo's fixed 2-of-3.
  *
- * Run:   npx hardhat run scripts/committee_scaling.ts
- * Emits: artifacts/eval/committee_scaling.json + committee_scaling.md
+ * Network-agnostic: the committee signers are derived wallets that only sign the
+ * EIP-712 approval off-chain (no gas, no funding), while a single funded deployer
+ * sends every transaction. So it runs unchanged on local Hardhat or a public testnet:
+ *
+ *   npx hardhat run scripts/committee_scaling.ts                    # local devnet
+ *   npx hardhat run scripts/committee_scaling.ts --network sepolia  # public testnet
+ *
+ * Emits artifacts/eval/committee_scaling[.<network>].{json,md}. On a public network the
+ * output is suffixed with the network name so devnet numbers are not overwritten, and
+ * the verification tx hashes are recorded.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -19,7 +27,6 @@ const REPO_ROOT = path.join(__dirname, "..", "..");
 const FIXTURES = path.join(__dirname, "..", "test", "fixtures");
 const OUT_DIR = path.join(REPO_ROOT, "artifacts", "eval");
 
-// t-of-n committee configurations to sweep.
 const CONFIGS = [
   { t: 1, n: 1 },
   { t: 2, n: 3 },
@@ -62,9 +69,8 @@ function attestationPackageType() {
   )`;
 }
 
-async function signApproval(adapter: any, signer: any, pkg: any, recordHash: string) {
-  const chainId = (await ethers.provider.getNetwork()).chainId;
-  const domain = { name: "ChainAttestCommitteeAuth", version: "1", chainId, verifyingContract: await adapter.getAddress() };
+async function signApproval(adapterAddress: string, chainId: bigint, signer: any, pkg: any, recordHash: string) {
+  const domain = { name: "ChainAttestCommitteeAuth", version: "1", chainId, verifyingContract: adapterAddress };
   const types = {
     SourceRecordApproval: [
       { name: "sourceChainId", type: "uint256" }, { name: "sourceSystemId", type: "bytes32" },
@@ -86,22 +92,21 @@ async function signApproval(adapter: any, signer: any, pkg: any, recordHash: str
   return signer.signTypedData(domain, types, value);
 }
 
-async function measure(t: number, n: number): Promise<bigint> {
-  const signers = (await ethers.getSigners()).slice(0, n + 1);
-  const deployer = signers[0];
-  const committee = signers.slice(0, n); // first n signers form the committee
+// Deterministic off-chain-only committee signer wallets (never send transactions).
+function committeeWallets(count: number): any[] {
+  return Array.from({ length: count }, (_, i) => new ethers.Wallet(ethers.id(`chainattest-committee-signer-${i}`)));
+}
+
+async function measure(t: number, n: number, deployer: any, groth16Address: string, chainId: bigint) {
+  const committee = committeeWallets(n);
   const adapterId = ethers.id(`committee-${t}of${n}`);
 
-  const Adapter = await ethers.getContractFactory("CommitteeAuthAdapter");
-  const adapter = await Adapter.deploy(adapterId, t, committee.map((s) => s.address));
+  const Adapter = await ethers.getContractFactory("CommitteeAuthAdapter", deployer);
+  const adapter = await Adapter.deploy(adapterId, t, committee.map((w) => w.address));
   await adapter.waitForDeployment();
 
-  const SemanticGroth16 = await ethers.getContractFactory("SemanticGroth16Verifier");
-  const g16 = await SemanticGroth16.deploy();
-  await g16.waitForDeployment();
-
-  const SemanticVerifier = await ethers.getContractFactory("SemanticVerifier");
-  const verifier = await SemanticVerifier.deploy(await adapter.getAddress(), await g16.getAddress());
+  const SemanticVerifier = await ethers.getContractFactory("SemanticVerifier", deployer);
+  const verifier = await SemanticVerifier.deploy(await adapter.getAddress(), groth16Address);
   await verifier.waitForDeployment();
 
   const proof = normalizeProof(readJson("semantic_proof.json"));
@@ -115,65 +120,87 @@ async function measure(t: number, n: number): Promise<bigint> {
     weightsRoot: signals[2], datasetCommitment: ethers.keccak256(ethers.toUtf8Bytes("dataset")),
     trainingCommitment: ethers.keccak256(ethers.toUtf8Bytes("training")),
     metadataDigest: ethers.keccak256(ethers.toUtf8Bytes("metadata")),
-    owner: deployer.address, parentAttestationId: 0n, registeredAtBlock: signals[1],
+    // owner is bound into the committed commitment (owner*13); it must equal the value
+    // the fixture was generated with (Hardhat account #0), not the live deployer.
+    owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", parentAttestationId: 0n, registeredAtBlock: signals[1],
     registeredAtTime: 1775600000n, attestationCommitment: signals[3], adapterId,
     finalityDelayBlocks: 12n, signatures: [], semanticCircuitVersion: Number(signals[4]),
     proof, publicSignals: signals
   };
 
+  const adapterAddr = await adapter.getAddress();
   const recordHash = await adapter.computeAttestationRecordHash(pkg);
-  // t distinct authorized signers approve the record.
   pkg.signatures = [];
   for (let i = 0; i < t; i += 1) {
-    pkg.signatures.push({ signer: committee[i].address, signature: await signApproval(adapter, committee[i], pkg, recordHash) });
+    pkg.signatures.push({ signer: committee[i].address, signature: await signApproval(adapterAddr, chainId, committee[i], pkg, recordHash) });
   }
 
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [pkg]);
-  const receipt = await (await verifier.verifyAttestationPackage(encoded)).wait();
-  return receipt.gasUsed;
+  // Some public RPCs mis-estimate gas for the nested adapter+Groth16 call and return a
+  // bare "execution reverted"; bypass estimation with an explicit limit off local devnet.
+  const overrides = chainId === 31337n ? {} : { gasLimit: 900000n };
+  const tx = await verifier.verifyAttestationPackage(encoded, overrides);
+  const receipt = await tx.wait();
+  if (receipt.status !== 1) throw new Error(`verify reverted on-chain (tx ${tx.hash})`);
+  return { gas: receipt.gasUsed as bigint, hash: tx.hash as string };
 }
 
 async function main() {
-  const rows = [];
+  const network = await ethers.provider.getNetwork();
+  const chainId = network.chainId;
+  const isLocal = chainId === 31337n;
+  const [deployer] = await ethers.getSigners();
+
+  // Groth16 verifier is committee-independent: deploy once, reuse across configs.
+  const SemanticGroth16 = await ethers.getContractFactory("SemanticGroth16Verifier", deployer);
+  const g16 = await SemanticGroth16.deploy();
+  await g16.waitForDeployment();
+  const g16Address = await g16.getAddress();
+
+  const rows: any[] = [];
   for (const { t, n } of CONFIGS) {
-    const gas = await measure(t, n);
-    rows.push({ threshold: t, signers: n, gas: gas.toString() });
-    console.log(`  ${t}-of-${n}: ${Number(gas).toLocaleString("en-US")} gas`);
+    const { gas, hash } = await measure(t, n, deployer, g16Address, chainId);
+    rows.push({ threshold: t, signers: n, gas: gas.toString(), tx: isLocal ? null : hash });
+    console.log(`  ${t}-of-${n}: ${Number(gas).toLocaleString("en-US")} gas${isLocal ? "" : `  tx ${hash}`}`);
   }
 
   const base = Number(rows[0].gas);
-  const perSig =
-    rows.length > 1
-      ? Math.round((Number(rows[rows.length - 1].gas) - base) / (rows[rows.length - 1].threshold - rows[0].threshold))
-      : 0;
+  const last = rows[rows.length - 1];
+  const perSig = Math.round((Number(last.gas) - base) / (last.threshold - rows[0].threshold));
 
   const summary = {
     generatedAt: new Date().toISOString(),
+    network: { name: network.name, chainId: Number(chainId) },
     note:
-      "Destination attestation-verification gas across t-of-n committee sizes (local Hardhat). " +
-      "Gas grows roughly linearly with the threshold t (about one ecrecover per required signature); " +
+      "Destination attestation-verification gas across t-of-n committee sizes. Gas grows " +
+      "roughly linearly with the threshold t (about one ecrecover per required signature); " +
       "the mechanism is not tied to the demo's fixed 2-of-3.",
     per_signature_gas_estimate: perSig,
     rows,
   };
+
+  const suffix = isLocal ? "" : `.${network.name || "net" + chainId}`;
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  fs.writeFileSync(path.join(OUT_DIR, "committee_scaling.json"), JSON.stringify(summary, null, 2) + "\n");
+  fs.writeFileSync(path.join(OUT_DIR, `committee_scaling${suffix}.json`), JSON.stringify(summary, null, 2) + "\n");
 
   const md = [
-    "# ChainAttest Committee-Size Scaling",
+    `# ChainAttest Committee-Size Scaling${isLocal ? "" : ` (${network.name}, chain ${chainId})`}`,
     "",
     "Generated by `contracts/scripts/committee_scaling.ts`. Destination attestation-verification",
-    "gas as the t-of-n committee grows. Gas rises ~linearly with the threshold (about one ecrecover",
-    `per required signature, ≈${perSig.toLocaleString("en-US")} gas/sig here), confirming the`,
-    "threshold layer scales predictably beyond the demo's fixed 2-of-3.",
+    `gas as the t-of-n committee grows (~${perSig.toLocaleString("en-US")} gas/signature), confirming`,
+    "the threshold layer scales predictably beyond the demo's fixed 2-of-3.",
     "",
-    "| Committee | Attestation verify gas |",
-    "| --- | ---: |",
-    ...rows.map((r) => `| ${r.threshold}-of-${r.signers} | ${Number(r.gas).toLocaleString("en-US")} |`),
+    isLocal ? "| Committee | Attestation verify gas |" : "| Committee | Attestation verify gas | Tx |",
+    isLocal ? "| --- | ---: |" : "| --- | ---: | --- |",
+    ...rows.map((r) =>
+      isLocal
+        ? `| ${r.threshold}-of-${r.signers} | ${Number(r.gas).toLocaleString("en-US")} |`
+        : `| ${r.threshold}-of-${r.signers} | ${Number(r.gas).toLocaleString("en-US")} | \`${r.tx}\` |`
+    ),
     "",
   ].join("\n");
-  fs.writeFileSync(path.join(OUT_DIR, "committee_scaling.md"), md);
-  console.log(`\nWrote ${path.join("artifacts", "eval", "committee_scaling.json")} and .md`);
+  fs.writeFileSync(path.join(OUT_DIR, `committee_scaling${suffix}.md`), md);
+  console.log(`\nWrote artifacts/eval/committee_scaling${suffix}.{json,md}`);
 }
 
 main().catch((err) => {
