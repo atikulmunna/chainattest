@@ -68,7 +68,7 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - Solidity contracts for source registration, semantic verification, evaluation verification, and committee authentication
 - generated Groth16 verifier contracts in `contracts/src/generated/`
 - real proof fixtures used by the Hardhat integration tests
-- Circom circuits for semantic attestation and batch-aware evaluation-threshold proofs
+- Circom circuits for semantic attestation (collision-resistant Poseidon Merkle inclusion, `TREE_DEPTH=16`) and batch-aware evaluation-threshold proofs
 
 ### Coordinator and CLI
 
@@ -98,6 +98,15 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - demo runbook and paper-support docs under `docs/`
 - heterogeneous source support for Fabric-style permissioned registries through committee-authenticated `sourceSystemId` packages with explicit channel and transaction IDs
 
+### Evaluation and Reproducibility
+
+- reproducible circuit build (`npm run build --prefix circuits`, i.e. `circuits/scripts/build_circuits.js`) that regenerates the Groth16 artifacts, Solidity verifiers, and fixtures from source and self-verifies each proof
+- comparative gas harness (`contracts/scripts/measure_baselines.ts`) that submits the identical payload through ChainAttest, a trusted-bridge baseline (`contracts/src/baselines/GenericMessageBridge.sol`), and a naive digest anchor (`contracts/src/baselines/NaiveHashAnchor.sol`)
+- Merkle `TREE_DEPTH` scaling sweep (`circuits/scripts/scaling_curve.js`)
+- mainnet-equivalent gas→USD cost model (`contracts/scripts/gas_to_usd.js`)
+- evaluation outputs under `artifacts/eval/` (`baseline_comparison`, `scaling_curve`, `cost_model`)
+- an assembled IEEE conference paper under `docs/paper/` (`chainattest_paper.tex`/`.pdf`, Overleaf-ready `chainattest_paper.zip`) built from these numbers, with the semantic circuit, threat model, and evaluation validated on a public testnet (see below)
+
 ## Repository Map
 
 | Path | Purpose |
@@ -112,9 +121,11 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 | `schemas/` | JSON schemas for structured attestation and eval inputs |
 | `tests/` | Python orchestration, persistence, signer-boundary, and operator tests |
 | `docs/demo/` | Demo runbook, expected outputs, and troubleshooting |
-| `docs/paper/` | Thesis framing, evaluation notes, related-work outline, and threat model |
-| `docs/figures/` | Source-controlled Mermaid figure files |
-| `scripts/run_demo.py` | Reproducible local demo and benchmark runner |
+| `docs/paper/` | Assembled IEEE paper (`.tex`/`.pdf`/`.zip`) plus thesis, evaluation, related-work, threat-model, and testnet-setup docs |
+| `docs/figures/` | Mermaid figure sources and rendered PDF/PNG |
+| `circuits/scripts/` | Reproducible circuit build and Merkle-depth scaling harness |
+| `contracts/scripts/` | Comparative gas baselines and gas→USD cost-model scripts |
+| `scripts/run_demo.py` | Reproducible local/testnet demo and benchmark runner |
 
 ## Runtime Baseline
 
@@ -136,6 +147,14 @@ npm ci --prefix contracts
 npm ci --prefix circuits
 python -m pip install -e ./cli
 ```
+
+The `.ptau`/`.r1cs`/`.wasm`/`.zkey` proving artifacts are gitignored. From a fresh clone, drop a phase-2 powers-of-tau file (`powersOfTau28_hez_final_14_phase2.ptau`, which covers both circuits) into `circuits/`, then regenerate the proving artifacts, Solidity verifiers, and fixtures from source:
+
+```bash
+npm run build --prefix circuits
+```
+
+(Contract tests use committed proof fixtures and skip this step; the demo and proof generation require it.)
 
 ### 2. Validate The Main Paths
 
@@ -174,6 +193,19 @@ In `fabric` mode, the demo additionally emits:
 - explicit `sourceTxId`
 - a deterministic synthetic `sourceRegistry` derived from `sourceSystemId`
 - a destination fixture deployed with the dedicated `FabricCommitteeAuthAdapter`
+
+### 4. Run On A Public Testnet (Sepolia)
+
+The same flow runs unmodified against a public Ethereum testnet (free — Sepolia ETH comes from a faucet, RPC from a free tier). `contracts/hardhat.config.ts` reads an env-gated `sepolia` network, and `run_demo.py` honors a `SEPOLIA_DEPLOYER_KEY` override.
+
+```bash
+export SEPOLIA_RPC_URL="https://sepolia.infura.io/v3/<key>"
+export SEPOLIA_DEPLOYER_KEY="0x<faucet-funded-test-key>"
+python scripts/run_demo.py --rpc-url "$SEPOLIA_RPC_URL" --output-root artifacts/demo-sepolia
+node contracts/scripts/gas_to_usd.js   # mainnet-equivalent USD cost model
+```
+
+Full step-by-step (RPC + faucet + cost model) is in `docs/paper/testnet_setup.md`. A validated run produced publicly verifiable attestation/eval transactions whose gas matched the local devnet within 0.005%.
 
 ## Demo Outputs
 
@@ -274,10 +306,14 @@ GitHub Actions currently covers:
 
 ### Paper Docs
 
+- `docs/paper/chainattest_paper.tex` — assembled IEEE conference paper (with `.pdf` and Overleaf-ready `.zip`)
+- `docs/paper/README.md` — paper build note (LaTeX/Overleaf) and figure-render recipe
+- `docs/paper/testnet_setup.md` — free public-testnet (Sepolia) run guide
 - `docs/paper/contributions_and_thesis.md`
 - `docs/paper/evaluation_methodology.md`
 - `docs/paper/related_work_outline.md`
 - `docs/paper/threat_model.md`
+- `docs/paper/fabric_public_evaluation.md`
 
 ### Figure Sources
 
