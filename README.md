@@ -148,13 +148,19 @@ npm ci --prefix circuits
 python -m pip install -e ./cli
 ```
 
-The `.ptau`/`.r1cs`/`.wasm`/`.zkey` proving artifacts are gitignored. From a fresh clone, drop a phase-2 powers-of-tau file (`powersOfTau28_hez_final_14_phase2.ptau`, which covers both circuits) into `circuits/`, then regenerate the proving artifacts, Solidity verifiers, and fixtures from source:
+The `.ptau`/`.r1cs`/`.wasm`/`.zkey` proving artifacts are gitignored. Restore the pinned runtime artifacts used by CI and the demo from their versioned GitHub release:
+
+```bash
+python scripts/fetch_proving_artifacts.py
+```
+
+The fetcher validates the release archive and each extracted file against repository-pinned SHA-256 digests before writing anything. For circuit development or an independent trusted setup, place `powersOfTau28_hez_final_14_phase2.ptau` in `circuits/`, then regenerate the proving artifacts, Solidity verifiers, and fixtures from source:
 
 ```bash
 npm run build --prefix circuits
 ```
 
-(Contract tests use committed proof fixtures and skip this step; the demo and proof generation require it.)
+Contract tests use committed proof fixtures and need neither path; the demo and live proof generation require restored or regenerated runtime artifacts.
 
 ### 2. Validate The Main Paths
 

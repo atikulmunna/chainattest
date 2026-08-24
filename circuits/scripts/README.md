@@ -3,6 +3,13 @@
 The Groth16 binaries (`*.r1cs`, `*.zkey`, `*_js/*.wasm`, `*.sym`) are gitignored. Use the
 build script to regenerate them, the Solidity verifiers, and the test fixtures from source.
 
+For ordinary CI, demo, and proof-generation use, restore the versioned runtime artifacts from
+the repository root instead. The fetcher verifies both the archive and individual file hashes:
+
+```bash
+python scripts/fetch_proving_artifacts.py
+```
+
 ## Prerequisites
 
 - Dependencies installed: `npm ci` in `circuits/` (provides `circom2` and `snarkjs`).

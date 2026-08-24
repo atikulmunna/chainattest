@@ -64,6 +64,9 @@ jobs:
           npm ci --prefix contracts
           npm ci --prefix circuits
 
+      - name: Restore pinned proving artifacts
+        run: python scripts/fetch_proving_artifacts.py
+
       - name: Build contracts for bridge-backed tests
         run: npm run build --prefix contracts
 
@@ -109,6 +112,9 @@ jobs:
         run: |
           npm ci --prefix contracts
           npm ci --prefix circuits
+
+      - name: Restore pinned proving artifacts
+        run: python scripts/fetch_proving_artifacts.py
 
       - name: Build contracts
         run: npm run build --prefix contracts
