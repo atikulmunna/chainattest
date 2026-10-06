@@ -211,7 +211,7 @@ python scripts/run_demo.py --rpc-url "$SEPOLIA_RPC_URL" --output-root artifacts/
 node contracts/scripts/gas_to_usd.js   # mainnet-equivalent USD cost model
 ```
 
-Full step-by-step (RPC + faucet + cost model) is in `docs/paper/testnet_setup.md`. A validated run produced publicly verifiable transactions whose attestation gas matched the local devnet within 12 gas (0.003%). That run predates the blinded eval package, so re-run it to measure the current eval path on Sepolia.
+Full step-by-step (RPC + faucet + cost model) is in `docs/paper/testnet_setup.md`. A validated run of the blinded eval design produced publicly verifiable attestation and eval transactions whose gas matched the local devnet within 24 gas (under 0.005%).
 
 ## Demo Outputs
 
