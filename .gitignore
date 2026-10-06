@@ -23,3 +23,10 @@ circuits/*.sym
 proofs/
 logs/
 coordinator/state/
+
+# Local-only planning and design documents
+CLAUDE.md
+tasks.md
+*srs*
+*SRS*
+ChainAttest_Protocol_and_Interface_Spec.md

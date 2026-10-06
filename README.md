@@ -111,8 +111,6 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 
 | Path | Purpose |
 | --- | --- |
-| `SRS_ChainAttest_Revised.md` | Revised SRS and research framing |
-| `ChainAttest_Protocol_and_Interface_Spec.md` | Protocol, package, and interface specification |
 | `contracts/` | Solidity contracts, generated verifiers, and Hardhat tests |
 | `circuits/` | Circom circuits and proving artifacts |
 | `cli/` | Python CLI for manifests, witness inputs, and package rendering |
@@ -350,5 +348,5 @@ The strongest next engineering moves are:
 
 ## Primary Documents
 
-- [SRS_ChainAttest_Revised.md](SRS_ChainAttest_Revised.md)
-- [ChainAttest_Protocol_and_Interface_Spec.md](ChainAttest_Protocol_and_Interface_Spec.md)
+- [docs/paper/chainattest_paper.pdf](docs/paper/chainattest_paper.pdf): the assembled paper
+- [docs/paper/threat_model.md](docs/paper/threat_model.md): trust assumptions and security properties
