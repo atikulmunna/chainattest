@@ -23,7 +23,7 @@ ChainAttest is built around five claims:
 
 1. The payload is attestation evidence, not assets.
 2. The proof relations are ML-specific, not just consensus- or transfer-specific.
-3. Evaluation claims can be privacy-preserving instead of exposing the raw score.
+3. Evaluation claims can be privacy-preserving: the chain sees a proved verdict over blinded commitments, never a count or the score.
 4. Cross-chain verification should separate source authenticity from semantic verification.
 5. The resulting destination record can serve as public compliance evidence for provenance and traceability workflows.
 
@@ -38,7 +38,7 @@ The current design is easiest to understand as four layers.
 - model lineage
 - ownership
 - revocation-aware status
-- structured evaluation transcript summaries with batch-aware result digests
+- evaluation claims as blinded commitments only (transcript commitment, score commitment, threshold, minimum sample size, verdict); the batch counts stay with the evaluator
 
 ### 2. Source Authenticity
 
@@ -50,9 +50,9 @@ The destination verifier stack checks:
 
 - committee-authenticated attestation packages
 - semantic Groth16 proofs for ML attestation integrity
-- evaluation Groth16 proofs for thresholded private claims
-- evaluator authorization and evaluator-policy metadata
-- structured transcript consistency, including batch summary digests and derived score checks
+- evaluation Groth16 proofs over blinded commitments: the circuit range-checks the hidden batch counts, enforces `N >= minSampleCount`, computes the verdict `K * 10000 >= thresholdBps * N`, and opens `C_T = Poseidon(context, config, Poseidon(batch summary), r_T)` and `C_S = Poseidon(K, N, r_S)`
+- evaluator authorization and evaluator-policy metadata, with the evaluator signing the commitments rather than plaintext statistics
+- a PASS-only admission rule (the circuit proves PASS and FAIL; the destination records PASS)
 - replay protection and public-signal consistency
 - normalized permissioned-source identities via `sourceSystemId`, `sourceChannelId`, `sourceTxId`, and deterministic synthetic registry addresses
 - permissioned-source revocation handling for both attestation and evaluation claims
@@ -68,7 +68,7 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - Solidity contracts for source registration, semantic verification, evaluation verification, and committee authentication
 - generated Groth16 verifier contracts in `contracts/src/generated/`
 - real proof fixtures used by the Hardhat integration tests
-- Circom circuits for semantic attestation (collision-resistant Poseidon Merkle inclusion, `TREE_DEPTH=16`) and batch-aware evaluation-threshold proofs
+- Circom circuits for semantic attestation (collision-resistant Poseidon Merkle inclusion, `TREE_DEPTH=16`) and blinded, batch-aware evaluation-threshold proofs (eval circuit version 4)
 
 ### Coordinator and CLI
 
@@ -101,7 +101,9 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 ### Evaluation and Reproducibility
 
 - reproducible circuit build (`npm run build --prefix circuits`, i.e. `circuits/scripts/build_circuits.js`) that regenerates the Groth16 artifacts, Solidity verifiers, and fixtures from source and self-verifies each proof
-- comparative gas harness (`contracts/scripts/measure_baselines.ts`) that submits the identical payload through ChainAttest, a trusted-bridge baseline (`contracts/src/baselines/GenericMessageBridge.sol`), and a naive digest anchor (`contracts/src/baselines/NaiveHashAnchor.sol`)
+- comparative gas harness (`contracts/scripts/measure_baselines.ts`) that submits the identical payload through ChainAttest, a trusted-bridge baseline (`contracts/src/baselines/GenericMessageBridge.sol`), and a naive digest anchor (`contracts/src/baselines/NaiveHashAnchor.sol`), on both the EVM-source and the Fabric-source path
+- negative-witness constraint checks for the eval circuit (`circuits/scripts/check_eval_constraints.js`)
+- score-opening helpers for deferred selective disclosure (`chain_attest export-score-opening` / `verify-score-opening`)
 - Merkle `TREE_DEPTH` scaling sweep (`circuits/scripts/scaling_curve.js`)
 - mainnet-equivalent gas→USD cost model (`contracts/scripts/gas_to_usd.js`)
 - evaluation outputs under `artifacts/eval/` (`baseline_comparison`, `scaling_curve`, `cost_model`)
@@ -209,7 +211,7 @@ python scripts/run_demo.py --rpc-url "$SEPOLIA_RPC_URL" --output-root artifacts/
 node contracts/scripts/gas_to_usd.js   # mainnet-equivalent USD cost model
 ```
 
-Full step-by-step (RPC + faucet + cost model) is in `docs/paper/testnet_setup.md`. A validated run produced publicly verifiable attestation/eval transactions whose gas matched the local devnet within 0.005%.
+Full step-by-step (RPC + faucet + cost model) is in `docs/paper/testnet_setup.md`. A validated run produced publicly verifiable transactions whose attestation gas matched the local devnet within 12 gas (0.003%). That run predates the blinded eval package, so re-run it to measure the current eval path on Sepolia.
 
 ## Demo Outputs
 
@@ -332,7 +334,8 @@ This is a high-credibility research prototype, not a production launch.
 
 Important current limits:
 
-- the eval proof is bound to a batch-aware structured transcript summary, not a fully proved benchmark execution trace
+- the eval proof is bound to a committed, batch-aware transcript summary, not a fully proved benchmark execution trace
+- score privacy holds against the public, not against the evaluator or the coordinator that builds the witness; keep the eval witness (`eval_input.json`) private, since it is the commitment opening
 - the HTTP signer service is still a local reference boundary, not an HSM or managed secret platform
 - SQLite provides strong single-host durability, not multi-writer distributed coordination
 - the current permissioned-source path is committee-authenticated and normalized through synthetic registry addresses plus explicit channel / transaction IDs, not a native Hyperledger Fabric light-client integration
@@ -341,7 +344,7 @@ Important current limits:
 
 The strongest next engineering moves are:
 
-1. move from batch-aware transcript summaries toward signed or provable evaluator execution traces
+1. move from committed transcript summaries toward signed or provable evaluator execution traces
 2. replace the local signer reference service with a stronger isolated signer or secret-manager-backed boundary
 3. extend durability and observability for multi-worker coordination
 4. expand benchmark depth and paper-facing evaluation outputs
