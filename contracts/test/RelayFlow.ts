@@ -78,19 +78,11 @@ function evalPackageType() {
     bytes32 sourceBlockHash,
     uint256 attestationId,
     bytes32 benchmarkDigest,
-    bytes32 evalTranscriptDigest,
-    bytes32 datasetSplitDigest,
-    bytes32 inferenceConfigDigest,
-    bytes32 randomnessSeedDigest,
-    uint32 transcriptSampleCount,
-    uint32 transcriptVersion,
-    uint32 batchCount,
-    bytes32 batchResultsDigest,
-    uint32 correctCount,
-    uint32 incorrectCount,
-    uint32 abstainCount,
+    uint256 transcriptCommitment,
     uint256 scoreCommitment,
     uint32 thresholdBps,
+    uint32 minSampleCount,
+    uint8 verdict,
     address evaluator,
     bytes32 evaluatorKeyId,
     bytes32 evaluatorPolicyDigest,
@@ -102,7 +94,7 @@ function evalPackageType() {
     tuple(address signer, bytes signature)[] signatures,
     uint32 evalCircuitVersion,
     tuple(uint256[2] pA, uint256[2][2] pB, uint256[2] pC) proof,
-    uint256[7] publicSignals
+    uint256[8] publicSignals
   )`;
 }
 
@@ -115,54 +107,6 @@ function normalizedExternalRegistry(sourceSystemId: string): string {
     ethers.solidityPacked(["string", "bytes32"], ["chainattest:external-registry", sourceSystemId])
   );
   return ethers.getAddress(`0x${digest.slice(-40)}`);
-}
-
-function computeTranscriptDigest(
-  attestationId: bigint,
-  benchmarkDigest: string,
-  datasetSplitDigest: string,
-  inferenceConfigDigest: string,
-  randomnessSeedDigest: string,
-  transcriptSampleCount: number,
-  transcriptVersion: number,
-  batchCount: number,
-  batchResultsDigest: string,
-  correctCount: number,
-  incorrectCount: number,
-  abstainCount: number
-): string {
-  return ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(
-      [
-        "uint256",
-        "bytes32",
-        "bytes32",
-        "bytes32",
-        "bytes32",
-        "uint32",
-        "uint32",
-        "uint32",
-        "bytes32",
-        "uint32",
-        "uint32",
-        "uint32"
-      ],
-      [
-        attestationId,
-        benchmarkDigest,
-        datasetSplitDigest,
-        inferenceConfigDigest,
-        randomnessSeedDigest,
-        transcriptSampleCount,
-        transcriptVersion,
-        batchCount,
-        batchResultsDigest,
-        correctCount,
-        incorrectCount,
-        abstainCount
-      ]
-    )
-  );
 }
 
 async function signApproval(adapter: any, signer: any, pkg: any, recordHash: string) {
@@ -223,19 +167,11 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
       { name: "sourceRegistry", type: "address" },
       { name: "attestationId", type: "uint256" },
       { name: "benchmarkDigest", type: "bytes32" },
-      { name: "evalTranscriptDigest", type: "bytes32" },
-      { name: "datasetSplitDigest", type: "bytes32" },
-      { name: "inferenceConfigDigest", type: "bytes32" },
-      { name: "randomnessSeedDigest", type: "bytes32" },
-      { name: "transcriptSampleCount", type: "uint32" },
-      { name: "transcriptVersion", type: "uint32" },
-      { name: "batchCount", type: "uint32" },
-      { name: "batchResultsDigest", type: "bytes32" },
-      { name: "correctCount", type: "uint32" },
-      { name: "incorrectCount", type: "uint32" },
-      { name: "abstainCount", type: "uint32" },
+      { name: "transcriptCommitment", type: "uint256" },
       { name: "scoreCommitment", type: "uint256" },
       { name: "thresholdBps", type: "uint32" },
+      { name: "minSampleCount", type: "uint32" },
+      { name: "verdict", type: "uint8" },
       { name: "evaluator", type: "address" },
       { name: "evaluatorKeyId", type: "bytes32" },
       { name: "evaluatorPolicyDigest", type: "bytes32" },
@@ -252,19 +188,11 @@ async function signEvaluatorAttestation(evalVerifier: any, signer: any, pkg: any
     sourceRegistry: pkg.sourceRegistry,
     attestationId: pkg.attestationId,
     benchmarkDigest: pkg.benchmarkDigest,
-    evalTranscriptDigest: pkg.evalTranscriptDigest,
-    datasetSplitDigest: pkg.datasetSplitDigest,
-    inferenceConfigDigest: pkg.inferenceConfigDigest,
-    randomnessSeedDigest: pkg.randomnessSeedDigest,
-    transcriptSampleCount: pkg.transcriptSampleCount,
-    transcriptVersion: pkg.transcriptVersion,
-    batchCount: pkg.batchCount,
-    batchResultsDigest: pkg.batchResultsDigest,
-    correctCount: pkg.correctCount,
-    incorrectCount: pkg.incorrectCount,
-    abstainCount: pkg.abstainCount,
+    transcriptCommitment: pkg.transcriptCommitment,
     scoreCommitment: pkg.scoreCommitment,
     thresholdBps: pkg.thresholdBps,
+    minSampleCount: pkg.minSampleCount,
+    verdict: pkg.verdict,
     evaluator: pkg.evaluator,
     evaluatorKeyId: pkg.evaluatorKeyId,
     evaluatorPolicyDigest: pkg.evaluatorPolicyDigest,
@@ -376,81 +304,8 @@ describe("RelayFlow", function () {
     return pkg;
   }
 
-  async function buildSignedEvalPackage(
-    fixture: any,
-    options: { packageOverrides?: Record<string, any>; evaluatorSigner?: any } = {}
-  ) {
-    const { adapter, adapterId, deployer, signer1, signer2, signer3, evalVerifier } = fixture;
-    const evalProof = normalizeProof(readJson("eval_proof.json"));
-    const evalSignals = normalizeSignals(readJson("eval_public.json"));
-    const benchmarkDigest = "0x1111111111111111111111111111111111111111111111111111111111111111";
-    const datasetSplitDigest = "0x2222222222222222222222222222222222222222222222222222222222222222";
-    const inferenceConfigDigest = "0x3333333333333333333333333333333333333333333333333333333333333333";
-    const randomnessSeedDigest = "0x4444444444444444444444444444444444444444444444444444444444444444";
-    const transcriptSampleCount = 100;
-    const transcriptVersion = 2;
-    const batchCount = 4;
-    const batchResultsDigest = ethers.toBeHex(evalSignals[3], 32);
-    const correctCount = 92;
-    const incorrectCount = 8;
-    const abstainCount = 0;
-    const evalTranscriptDigest = computeTranscriptDigest(
-      42n,
-      benchmarkDigest,
-      datasetSplitDigest,
-      inferenceConfigDigest,
-      randomnessSeedDigest,
-      transcriptSampleCount,
-      transcriptVersion,
-      batchCount,
-      batchResultsDigest,
-      correctCount,
-      incorrectCount,
-      abstainCount
-    );
-    const evaluatorSigner = options.evaluatorSigner ?? signer3;
-    const pkg: any = {
-      packageVersion: 1,
-      packageType: 2,
-      sourceChainId: 11155111n,
-      sourceSystemId: ethers.ZeroHash,
-      sourceChannelId: ethers.ZeroHash,
-      sourceTxId: ethers.ZeroHash,
-      sourceRegistry: deployer.address,
-      sourceBlockNumber: 12350n,
-      sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("eval-block")),
-      attestationId: 42n,
-      benchmarkDigest,
-      evalTranscriptDigest,
-      datasetSplitDigest,
-      inferenceConfigDigest,
-      randomnessSeedDigest,
-      transcriptSampleCount,
-      transcriptVersion,
-      batchCount,
-      batchResultsDigest,
-      correctCount,
-      incorrectCount,
-      abstainCount,
-      scoreCommitment: evalSignals[4],
-      thresholdBps: Number(evalSignals[5]),
-      evaluator: await evaluatorSigner.getAddress(),
-      evaluatorKeyId: evaluatorKeyId(await evaluatorSigner.getAddress()),
-      evaluatorPolicyDigest: "0x6666666666666666666666666666666666666666666666666666666666666666",
-      evaluatorPolicyVersion: 1,
-      evaluatorSignature: "0x",
-      claimedAtBlock: 12350n,
-      adapterId,
-      finalityDelayBlocks: 12n,
-      signatures: [],
-      evalCircuitVersion: Number(evalSignals[6]),
-      proof: evalProof,
-      publicSignals: evalSignals,
-      ...(options.packageOverrides ?? {})
-    };
-
-    pkg.evaluatorSignature = await signEvaluatorAttestation(evalVerifier, evaluatorSigner, pkg);
-
+  async function signCommitteeApprovals(fixture: any, pkg: any) {
+    const { adapter, signer1, signer2 } = fixture;
     const recordHash = await adapter.computeEvalRecordHash(pkg);
     pkg.signatures = [
       {
@@ -462,8 +317,65 @@ describe("RelayFlow", function () {
         signature: await signApproval(adapter, signer2, pkg, recordHash)
       }
     ];
-
     return pkg;
+  }
+
+  async function buildSignedEvalPackage(
+    fixture: any,
+    options: { packageOverrides?: Record<string, any>; evaluatorSigner?: any; fixtureName?: "eval" | "eval_fail" } = {}
+  ) {
+    const { adapterId, deployer, signer3, evalVerifier } = fixture;
+    const fixtureName = options.fixtureName ?? "eval";
+    const evalProof = normalizeProof(readJson(`${fixtureName}_proof.json`));
+    const evalSignals = normalizeSignals(readJson(`${fixtureName}_public.json`));
+    const evaluatorSigner = options.evaluatorSigner ?? signer3;
+    // Only the public side of the claim: the counts and blindings stay in the
+    // fixture witness and never enter the package.
+    const pkg: any = {
+      packageVersion: 2,
+      packageType: 2,
+      sourceChainId: 11155111n,
+      sourceSystemId: ethers.ZeroHash,
+      sourceChannelId: ethers.ZeroHash,
+      sourceTxId: ethers.ZeroHash,
+      sourceRegistry: deployer.address,
+      sourceBlockNumber: 12350n,
+      sourceBlockHash: ethers.keccak256(ethers.toUtf8Bytes("eval-block")),
+      attestationId: 42n,
+      benchmarkDigest: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      transcriptCommitment: evalSignals[2],
+      scoreCommitment: evalSignals[3],
+      thresholdBps: Number(evalSignals[4]),
+      minSampleCount: Number(evalSignals[5]),
+      verdict: Number(evalSignals[6]),
+      evaluator: await evaluatorSigner.getAddress(),
+      evaluatorKeyId: evaluatorKeyId(await evaluatorSigner.getAddress()),
+      evaluatorPolicyDigest: "0x6666666666666666666666666666666666666666666666666666666666666666",
+      evaluatorPolicyVersion: 1,
+      evaluatorSignature: "0x",
+      claimedAtBlock: 12350n,
+      adapterId,
+      finalityDelayBlocks: 12n,
+      signatures: [],
+      evalCircuitVersion: Number(evalSignals[7]),
+      proof: evalProof,
+      publicSignals: evalSignals,
+      ...(options.packageOverrides ?? {})
+    };
+
+    pkg.evaluatorSignature = await signEvaluatorAttestation(evalVerifier, evaluatorSigner, pkg);
+    return signCommitteeApprovals(fixture, pkg);
+  }
+
+  async function verifyFixtureAttestation(fixture: any) {
+    const attPkg = await buildSignedAttestationPackage(fixture);
+    const attEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attPkg]);
+    await fixture.semanticVerifier.verifyAttestationPackage(attEncoded);
+    return attPkg;
+  }
+
+  function encodeEval(pkg: any) {
+    return ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [pkg]);
   }
 
   it("verifies an attestation package end-to-end", async function () {
@@ -538,22 +450,116 @@ describe("RelayFlow", function () {
     );
   });
 
-  it("rejects eval packages with mismatched transcript commitments", async function () {
+  it("carries no plaintext transcript count or exact score in the eval package", async function () {
     const fixture = await deployFixture();
-    const attPkg = await buildSignedAttestationPackage(fixture);
-    const attEncoded = ethers.AbiCoder.defaultAbiCoder().encode([attestationPackageType()], [attPkg]);
-    await fixture.semanticVerifier.verifyAttestationPackage(attEncoded);
+    const components = fixture.evalVerifier.interface
+      .getFunction("computeEvaluatorAttestationDigest")!
+      .inputs[0].components!.map((component: any) => component.name);
+    for (const leaked of [
+      "correctCount",
+      "incorrectCount",
+      "abstainCount",
+      "transcriptSampleCount",
+      "batchResultsDigest",
+      "exactScore"
+    ]) {
+      expect(components).to.not.include(leaked);
+    }
+    expect(components).to.include.members(["transcriptCommitment", "scoreCommitment", "minSampleCount", "verdict"]);
+  });
+
+  it("rejects eval packages whose transcript commitment differs from the proved one", async function () {
+    const fixture = await deployFixture();
+    await verifyFixtureAttestation(fixture);
+
+    // Evaluator and committee both sign the substituted commitment, so only the
+    // proof binding can catch it.
+    const evalPkg = await buildSignedEvalPackage(fixture, {
+      packageOverrides: { transcriptCommitment: 123456789n }
+    });
+
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(encodeEval(evalPkg))).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "PublicInputMismatch"
+    );
+  });
+
+  it("rejects eval packages whose score commitment differs from the proved one", async function () {
+    const fixture = await deployFixture();
+    await verifyFixtureAttestation(fixture);
 
     const evalPkg = await buildSignedEvalPackage(fixture, {
-      packageOverrides: {
-        evalTranscriptDigest: ethers.keccak256(ethers.toUtf8Bytes("tampered-transcript"))
-      }
+      packageOverrides: { scoreCommitment: 987654321n }
     });
-    const evalEncoded = ethers.AbiCoder.defaultAbiCoder().encode([evalPackageType()], [evalPkg]);
 
-    await expect(fixture.evalVerifier.verifyEvalClaimPackage(evalEncoded)).to.be.revertedWithCustomError(
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(encodeEval(evalPkg))).to.be.revertedWithCustomError(
       fixture.evalVerifier,
-      "InvalidTranscriptCommitment"
+      "PublicInputMismatch"
+    );
+  });
+
+  it("rejects a FAIL verdict even when its proof is valid", async function () {
+    const fixture = await deployFixture();
+    await verifyFixtureAttestation(fixture);
+
+    const evalPkg = await buildSignedEvalPackage(fixture, { fixtureName: "eval_fail" });
+    expect(evalPkg.verdict).to.equal(0);
+    expect(
+      await fixture.evalGroth16.verifyProof(evalPkg.proof.pA, evalPkg.proof.pB, evalPkg.proof.pC, evalPkg.publicSignals)
+    ).to.equal(true);
+
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(encodeEval(evalPkg)))
+      .to.be.revertedWithCustomError(fixture.evalVerifier, "VerdictNotPass")
+      .withArgs(0);
+  });
+
+  it("rejects a FAIL proof relabelled as PASS", async function () {
+    const fixture = await deployFixture();
+    await verifyFixtureAttestation(fixture);
+
+    const relabelled = normalizeSignals(readJson("eval_fail_public.json"));
+    relabelled[6] = 1n;
+    const evalPkg = await buildSignedEvalPackage(fixture, {
+      fixtureName: "eval_fail",
+      packageOverrides: { verdict: 1, publicSignals: relabelled }
+    });
+
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(encodeEval(evalPkg))).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "InvalidProof"
+    );
+  });
+
+  it("rejects eval packages with a zero minimum sample count or an out-of-range threshold", async function () {
+    const fixture = await deployFixture();
+    await verifyFixtureAttestation(fixture);
+
+    const noMinimum = await buildSignedEvalPackage(fixture, { packageOverrides: { minSampleCount: 0 } });
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(encodeEval(noMinimum))).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "InvalidMinSampleCount"
+    );
+
+    const overThreshold = await buildSignedEvalPackage(fixture, { packageOverrides: { thresholdBps: 10001 } });
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(encodeEval(overThreshold))).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "InvalidThreshold"
+    );
+  });
+
+  it("rejects an evaluator statement replayed under a different source system", async function () {
+    const fixture = await deployFixture();
+    await verifyFixtureAttestation(fixture);
+
+    // The committee re-approves the moved record, but the evaluator signed the
+    // original source identifiers, so its statement no longer verifies.
+    const evalPkg = await buildSignedEvalPackage(fixture);
+    evalPkg.sourceSystemId = ethers.id("another-source-system");
+    await signCommitteeApprovals(fixture, evalPkg);
+
+    await expect(fixture.evalVerifier.verifyEvalClaimPackage(encodeEval(evalPkg))).to.be.revertedWithCustomError(
+      fixture.evalVerifier,
+      "InvalidEvaluatorSignature"
     );
   });
 

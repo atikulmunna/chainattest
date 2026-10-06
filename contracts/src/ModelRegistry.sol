@@ -11,19 +11,13 @@ contract ModelRegistry {
     error AttestationIsRevoked(uint256 attestationId);
     error NotAttestationOwner(address expectedOwner, address actualSender);
     error BenchmarkDigestRequired();
-    error TranscriptDigestRequired();
+    error TranscriptCommitmentRequired();
     error ScoreCommitmentRequired();
     error InvalidThresholdBps(uint32 thresholdBps);
+    error InvalidMinSampleCount(uint32 minSampleCount);
+    error InvalidVerdict(uint8 verdict);
     error EvaluatorRequired();
     error EvaluatorKeyIdRequired();
-    error DatasetSplitDigestRequired();
-    error InferenceConfigDigestRequired();
-    error RandomnessSeedDigestRequired();
-    error InvalidTranscriptSampleCount(uint32 transcriptSampleCount);
-    error InvalidTranscriptVersion(uint32 transcriptVersion);
-    error InvalidBatchCount(uint32 batchCount);
-    error BatchResultsDigestRequired();
-    error InvalidTranscriptSummary(uint32 transcriptSampleCount, uint32 totalCount);
     error EvaluatorPolicyDigestRequired();
     error InvalidEvaluatorPolicyVersion(uint32 evaluatorPolicyVersion);
     error EvalClaimAlreadyExists(uint256 attestationId, bytes32 benchmarkDigest);
@@ -44,22 +38,16 @@ contract ModelRegistry {
         bool revoked;
     }
 
+    // Only blinded commitments reach the registry. The per-batch transcript summary
+    // and the exact score stay with the evaluator as the commitment openings.
     struct EvalClaimRecord {
         uint256 attestationId;
         bytes32 benchmarkDigest;
-        bytes32 evalTranscriptDigest;
-        bytes32 datasetSplitDigest;
-        bytes32 inferenceConfigDigest;
-        bytes32 randomnessSeedDigest;
-        uint32 transcriptSampleCount;
-        uint32 transcriptVersion;
-        uint32 batchCount;
-        bytes32 batchResultsDigest;
-        uint32 correctCount;
-        uint32 incorrectCount;
-        uint32 abstainCount;
+        uint256 transcriptCommitment;
         uint256 scoreCommitment;
         uint32 thresholdBps;
+        uint32 minSampleCount;
+        uint8 verdict;
         address evaluator;
         bytes32 evaluatorKeyId;
         bytes32 evaluatorPolicyDigest;
@@ -80,9 +68,11 @@ contract ModelRegistry {
     event EvalClaimRegistered(
         uint256 indexed attestationId,
         bytes32 indexed benchmarkDigest,
-        bytes32 evalTranscriptDigest,
+        uint256 transcriptCommitment,
         uint256 scoreCommitment,
         uint32 thresholdBps,
+        uint32 minSampleCount,
+        uint8 verdict,
         address evaluator,
         bytes32 evaluatorPolicyDigest,
         uint32 evaluatorPolicyVersion
@@ -142,19 +132,11 @@ contract ModelRegistry {
     function registerEvalClaim(
         uint256 attestationId,
         bytes32 benchmarkDigest,
-        bytes32 evalTranscriptDigest,
-        bytes32 datasetSplitDigest,
-        bytes32 inferenceConfigDigest,
-        bytes32 randomnessSeedDigest,
-        uint32 transcriptSampleCount,
-        uint32 transcriptVersion,
-        uint32 batchCount,
-        bytes32 batchResultsDigest,
-        uint32 correctCount,
-        uint32 incorrectCount,
-        uint32 abstainCount,
+        uint256 transcriptCommitment,
         uint256 scoreCommitment,
         uint32 thresholdBps,
+        uint32 minSampleCount,
+        uint8 verdict,
         address evaluator,
         bytes32 evaluatorKeyId,
         bytes32 evaluatorPolicyDigest,
@@ -165,18 +147,12 @@ contract ModelRegistry {
         if (attestation.revoked) revert AttestationIsRevoked(attestationId);
         if (attestation.owner != msg.sender) revert NotAttestationOwner(attestation.owner, msg.sender);
         if (benchmarkDigest == bytes32(0)) revert BenchmarkDigestRequired();
-        if (evalTranscriptDigest == bytes32(0)) revert TranscriptDigestRequired();
-        if (datasetSplitDigest == bytes32(0)) revert DatasetSplitDigestRequired();
-        if (inferenceConfigDigest == bytes32(0)) revert InferenceConfigDigestRequired();
-        if (randomnessSeedDigest == bytes32(0)) revert RandomnessSeedDigestRequired();
-        if (transcriptSampleCount == 0) revert InvalidTranscriptSampleCount(transcriptSampleCount);
-        if (transcriptVersion == 0) revert InvalidTranscriptVersion(transcriptVersion);
-        if (batchCount == 0) revert InvalidBatchCount(batchCount);
-        if (batchResultsDigest == bytes32(0)) revert BatchResultsDigestRequired();
-        uint32 totalCount = correctCount + incorrectCount + abstainCount;
-        if (totalCount != transcriptSampleCount) revert InvalidTranscriptSummary(transcriptSampleCount, totalCount);
+        if (transcriptCommitment == 0) revert TranscriptCommitmentRequired();
         if (scoreCommitment == 0) revert ScoreCommitmentRequired();
         if (thresholdBps > 10_000) revert InvalidThresholdBps(thresholdBps);
+        if (minSampleCount == 0) revert InvalidMinSampleCount(minSampleCount);
+        // The system of record keeps both outcomes; the public relay admits PASS only.
+        if (verdict > 1) revert InvalidVerdict(verdict);
         if (evaluator == address(0)) revert EvaluatorRequired();
         if (evaluatorKeyId == bytes32(0)) revert EvaluatorKeyIdRequired();
         if (evaluatorPolicyDigest == bytes32(0)) revert EvaluatorPolicyDigestRequired();
@@ -188,19 +164,11 @@ contract ModelRegistry {
         evalClaims[attestationId][benchmarkDigest] = EvalClaimRecord({
             attestationId: attestationId,
             benchmarkDigest: benchmarkDigest,
-            evalTranscriptDigest: evalTranscriptDigest,
-            datasetSplitDigest: datasetSplitDigest,
-            inferenceConfigDigest: inferenceConfigDigest,
-            randomnessSeedDigest: randomnessSeedDigest,
-            transcriptSampleCount: transcriptSampleCount,
-            transcriptVersion: transcriptVersion,
-            batchCount: batchCount,
-            batchResultsDigest: batchResultsDigest,
-            correctCount: correctCount,
-            incorrectCount: incorrectCount,
-            abstainCount: abstainCount,
+            transcriptCommitment: transcriptCommitment,
             scoreCommitment: scoreCommitment,
             thresholdBps: thresholdBps,
+            minSampleCount: minSampleCount,
+            verdict: verdict,
             evaluator: evaluator,
             evaluatorKeyId: evaluatorKeyId,
             evaluatorPolicyDigest: evaluatorPolicyDigest,
@@ -217,9 +185,11 @@ contract ModelRegistry {
         emit EvalClaimRegistered(
             attestationId,
             benchmarkDigest,
-            evalTranscriptDigest,
+            transcriptCommitment,
             scoreCommitment,
             thresholdBps,
+            minSampleCount,
+            verdict,
             evaluator,
             evaluatorPolicyDigest,
             evaluatorPolicyVersion

@@ -5,6 +5,9 @@ const circomlibjs = require("../../circuits/node_modules/circomlibjs");
 
 const BN254_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 const MAX_EVAL_BATCHES = 4;
+const EVAL_COUNT_LIMIT = 1n << 32n;
+const MAX_THRESHOLD_BPS = 10000n;
+const EVAL_CIRCUIT_VERSION = 4n;
 const SOURCE_RECORD_APPROVAL_TYPES = {
   SourceRecordApproval: [
     { name: "sourceChainId", type: "uint256" },
@@ -30,19 +33,11 @@ const EVAL_CLAIM_ATTESTATION_TYPES = {
     { name: "sourceRegistry", type: "address" },
     { name: "attestationId", type: "uint256" },
     { name: "benchmarkDigest", type: "bytes32" },
-    { name: "evalTranscriptDigest", type: "bytes32" },
-    { name: "datasetSplitDigest", type: "bytes32" },
-    { name: "inferenceConfigDigest", type: "bytes32" },
-    { name: "randomnessSeedDigest", type: "bytes32" },
-    { name: "transcriptSampleCount", type: "uint32" },
-    { name: "transcriptVersion", type: "uint32" },
-    { name: "batchCount", type: "uint32" },
-    { name: "batchResultsDigest", type: "bytes32" },
-    { name: "correctCount", type: "uint32" },
-    { name: "incorrectCount", type: "uint32" },
-    { name: "abstainCount", type: "uint32" },
+    { name: "transcriptCommitment", type: "uint256" },
     { name: "scoreCommitment", type: "uint256" },
     { name: "thresholdBps", type: "uint32" },
+    { name: "minSampleCount", type: "uint32" },
+    { name: "verdict", type: "uint8" },
     { name: "evaluator", type: "address" },
     { name: "evaluatorKeyId", type: "bytes32" },
     { name: "evaluatorPolicyDigest", type: "bytes32" },
@@ -101,19 +96,11 @@ function evalPackageType() {
     bytes32 sourceBlockHash,
     uint256 attestationId,
     bytes32 benchmarkDigest,
-    bytes32 evalTranscriptDigest,
-    bytes32 datasetSplitDigest,
-    bytes32 inferenceConfigDigest,
-    bytes32 randomnessSeedDigest,
-    uint32 transcriptSampleCount,
-    uint32 transcriptVersion,
-    uint32 batchCount,
-    bytes32 batchResultsDigest,
-    uint32 correctCount,
-    uint32 incorrectCount,
-    uint32 abstainCount,
+    uint256 transcriptCommitment,
     uint256 scoreCommitment,
     uint32 thresholdBps,
+    uint32 minSampleCount,
+    uint8 verdict,
     address evaluator,
     bytes32 evaluatorKeyId,
     bytes32 evaluatorPolicyDigest,
@@ -125,7 +112,7 @@ function evalPackageType() {
     tuple(address signer, bytes signature)[] signatures,
     uint32 evalCircuitVersion,
     tuple(uint256[2] pA, uint256[2][2] pB, uint256[2] pC) proof,
-    uint256[7] publicSignals
+    uint256[8] publicSignals
   )`;
 }
 
@@ -195,10 +182,42 @@ function parseBatchCounts(values) {
   return trimmed.split(",").map((value) => BigInt(value.trim()));
 }
 
-async function computeBatchResultsDigest(batchCorrectCounts, batchIncorrectCounts, batchAbstainCounts) {
-  const correctCounts = parseBatchCounts(batchCorrectCounts);
-  const incorrectCounts = parseBatchCounts(batchIncorrectCounts);
-  const abstainCounts = parseBatchCounts(batchAbstainCounts);
+function parseEvalCount(value, label) {
+  const parsed = BigInt(value);
+  if (parsed < 0n || parsed >= EVAL_COUNT_LIMIT) {
+    throw new Error(`${label} must be an integer in [0, 2^32)`);
+  }
+  return parsed;
+}
+
+function parseFieldElement(value, label) {
+  if (value === undefined || value === null || value === "") {
+    throw new Error(`${label} is required`);
+  }
+  const parsed = BigInt(value);
+  if (parsed < 0n || parsed >= BN254_FIELD_MODULUS) {
+    throw new Error(`${label} must be a BN254 field element in [0, p)`);
+  }
+  return parsed;
+}
+
+/*
+ * Computes the private witness and the two public commitments of the blinded
+ * eval circuit (eval_threshold.circom, version 4). Mirrors the circuit exactly:
+ *
+ *   batchSummary = Poseidon(batchCount, K_1, I_1, A_1, ..., K_4, I_4, A_4)
+ *   C_T = Poseidon(attestationId, benchmark, datasetSplit, inferenceConfig,
+ *                  randomnessSeed, transcriptVersion, batchSummary, r_T)
+ *   C_S = Poseidon(K, N, r_S)
+ *   verdict = [K * 10000 >= thresholdBps * N]
+ *
+ * The blinding randomizers are inputs, never generated here, so the bridge stays
+ * deterministic; callers sample them from a CSPRNG.
+ */
+async function computeEvalWitness(payload) {
+  const correctCounts = parseBatchCounts(payload.batchCorrectCounts);
+  const incorrectCounts = parseBatchCounts(payload.batchIncorrectCounts);
+  const abstainCounts = parseBatchCounts(payload.batchAbstainCounts);
   if (
     correctCounts.length !== incorrectCounts.length ||
     correctCounts.length !== abstainCounts.length
@@ -212,24 +231,85 @@ async function computeBatchResultsDigest(batchCorrectCounts, batchIncorrectCount
     throw new Error(`batch count arrays may contain at most ${MAX_EVAL_BATCHES} entries`);
   }
 
-  const poseidon = await circomlibjs.buildPoseidon();
-  let digest = poseidon.F.toString(poseidon([BigInt(correctCounts.length), 0n, 0n, 0n, 0n]));
-  for (let i = 0; i < MAX_EVAL_BATCHES; i += 1) {
-    const correct = correctCounts[i] ?? 0n;
-    const incorrect = incorrectCounts[i] ?? 0n;
-    const abstain = abstainCounts[i] ?? 0n;
-    digest = poseidon.F.toString(
-      poseidon([BigInt(digest), correct, incorrect, abstain, BigInt(i + 1)])
-    );
+  const batchCount = correctCounts.length;
+  const pad = (values) => Array.from({ length: MAX_EVAL_BATCHES }, (_, index) => values[index] ?? 0n);
+  const correct = pad(correctCounts).map((value, index) => parseEvalCount(value, `batch ${index + 1} correct count`));
+  const incorrect = pad(incorrectCounts).map((value, index) =>
+    parseEvalCount(value, `batch ${index + 1} incorrect count`)
+  );
+  const abstain = pad(abstainCounts).map((value, index) => parseEvalCount(value, `batch ${index + 1} abstain count`));
+
+  let correctTotal = 0n;
+  let sampleTotal = 0n;
+  for (let index = 0; index < batchCount; index += 1) {
+    const batchTotal = correct[index] + incorrect[index] + abstain[index];
+    if (batchTotal === 0n) {
+      throw new Error(`batch ${index + 1} is empty; every reported batch must contain at least one sample`);
+    }
+    correctTotal += correct[index];
+    sampleTotal += batchTotal;
   }
 
+  const thresholdBps = BigInt(payload.thresholdBps);
+  if (thresholdBps < 0n || thresholdBps > MAX_THRESHOLD_BPS) {
+    throw new Error("thresholdBps must be an integer in [0, 10000]");
+  }
+  const minSampleCount = BigInt(payload.minSampleCount);
+  if (minSampleCount < 1n || minSampleCount >= EVAL_COUNT_LIMIT) {
+    throw new Error("minSampleCount must be an integer in [1, 2^32)");
+  }
+  if (sampleTotal < minSampleCount) {
+    throw new Error("the transcript summary has fewer samples than minSampleCount");
+  }
+  const transcriptVersion = parseEvalCount(payload.transcriptVersion, "transcriptVersion");
+  const attestationId = parseFieldElement(payload.attestationId, "attestationId");
+  const transcriptBlinding = parseFieldElement(payload.transcriptBlinding, "transcriptBlinding");
+  const scoreBlinding = parseFieldElement(payload.scoreBlinding, "scoreBlinding");
+  const benchmarkField = BigInt(fieldFromHex(payload.benchmarkDigest));
+  const datasetSplitField = BigInt(fieldFromHex(payload.datasetSplitDigest));
+  const inferenceConfigField = BigInt(fieldFromHex(payload.inferenceConfigDigest));
+  const randomnessSeedField = BigInt(fieldFromHex(payload.randomnessSeedDigest));
+  const verdict = correctTotal * 10000n >= thresholdBps * sampleTotal ? 1n : 0n;
+
+  const poseidon = await circomlibjs.buildPoseidon();
+  const hash = (inputs) => BigInt(poseidon.F.toString(poseidon(inputs)));
+  const summaryInputs = [BigInt(batchCount)];
+  for (let index = 0; index < MAX_EVAL_BATCHES; index += 1) {
+    summaryInputs.push(correct[index], incorrect[index], abstain[index]);
+  }
+  const batchSummary = hash(summaryInputs);
+  const transcriptCommitment = hash([
+    attestationId,
+    benchmarkField,
+    datasetSplitField,
+    inferenceConfigField,
+    randomnessSeedField,
+    transcriptVersion,
+    batchSummary,
+    transcriptBlinding,
+  ]);
+  const scoreCommitment = hash([correctTotal, sampleTotal, scoreBlinding]);
+
+  const asStrings = (values) => values.map((value) => value.toString());
   return {
-    batchCount: correctCounts.length.toString(),
-    batchResultsDigestField: BigInt(digest).toString(),
-    batchResultsDigest: ethers.toBeHex(BigInt(digest), 32),
-    batchCorrectCounts: correctCounts.map((value) => value.toString()),
-    batchIncorrectCounts: incorrectCounts.map((value) => value.toString()),
-    batchAbstainCounts: abstainCounts.map((value) => value.toString()),
+    attestation_id: attestationId.toString(),
+    benchmark_digest_field: benchmarkField.toString(),
+    transcript_commitment: transcriptCommitment.toString(),
+    score_commitment: scoreCommitment.toString(),
+    threshold_bps: thresholdBps.toString(),
+    min_sample_count: minSampleCount.toString(),
+    verdict: verdict.toString(),
+    circuit_version_id: EVAL_CIRCUIT_VERSION.toString(),
+    dataset_split_digest_field: datasetSplitField.toString(),
+    inference_config_digest_field: inferenceConfigField.toString(),
+    randomness_seed_digest_field: randomnessSeedField.toString(),
+    transcript_version: transcriptVersion.toString(),
+    batch_count: batchCount.toString(),
+    batch_correct_counts: asStrings(correct),
+    batch_incorrect_counts: asStrings(incorrect),
+    batch_abstain_counts: asStrings(abstain),
+    transcript_blinding: transcriptBlinding.toString(),
+    score_blinding: scoreBlinding.toString(),
   };
 }
 
@@ -377,8 +457,9 @@ function computeEvalRecordHash(pkg) {
         "address",
         "uint256",
         "bytes32",
-        "bytes32",
         "uint256",
+        "uint256",
+        "uint32",
         "uint32",
         "bytes32",
         "uint256",
@@ -392,9 +473,10 @@ function computeEvalRecordHash(pkg) {
         pkg.sourceRegistry,
         BigInt(pkg.attestationId),
         pkg.benchmarkDigest,
-        pkg.evalTranscriptDigest,
+        BigInt(pkg.transcriptCommitment),
         BigInt(pkg.scoreCommitment),
         Number(pkg.thresholdBps),
+        Number(pkg.minSampleCount),
         pkg.evaluatorKeyId,
         BigInt(pkg.claimedAtBlock),
         pkg.packageType === 3,
@@ -427,131 +509,23 @@ async function main() {
     return;
   }
 
-  if (payload.action === "transcript_digest") {
-    const digest = ethers.keccak256(
-      ethers.AbiCoder.defaultAbiCoder().encode(
-        [
-          "uint256",
-          "bytes32",
-          "bytes32",
-          "bytes32",
-          "bytes32",
-          "uint32",
-          "uint32",
-          "uint32",
-          "bytes32",
-          "uint32",
-          "uint32",
-          "uint32",
-        ],
-        [
-          BigInt(payload.attestationId),
-          payload.benchmarkDigest,
-          payload.datasetSplitDigest,
-          payload.inferenceConfigDigest,
-          payload.randomnessSeedDigest,
-          Number(payload.transcriptSampleCount),
-          Number(payload.transcriptVersion),
-          Number(payload.batchCount),
-          payload.batchResultsDigest,
-          Number(payload.correctCount),
-          Number(payload.incorrectCount),
-          Number(payload.abstainCount),
-        ]
-      )
-    );
-    process.stdout.write(JSON.stringify({ evalTranscriptDigest: digest }));
-    return;
-  }
-
-  if (payload.action === "batch_results_digest") {
-    process.stdout.write(
-      JSON.stringify(
-        await computeBatchResultsDigest(
-          payload.batchCorrectCounts,
-          payload.batchIncorrectCounts,
-          payload.batchAbstainCounts
-        )
-      )
-    );
-    return;
-  }
-
-  if (payload.action === "eval_score_from_counts") {
-    const sampleCount = BigInt(payload.transcriptSampleCount);
-    const correctCount = BigInt(payload.correctCount);
-    if (sampleCount === 0n) {
-      throw new Error("transcriptSampleCount must be greater than zero");
-    }
-    const exactScore = (correctCount * 10000n) / sampleCount;
-    if (exactScore * sampleCount !== correctCount * 10000n) {
-      throw new Error("correctCount / transcriptSampleCount does not resolve to an exact basis-point score");
-    }
-    process.stdout.write(JSON.stringify({ exactScore: exactScore.toString() }));
-    return;
-  }
-
   if (payload.action === "eval_witness") {
+    process.stdout.write(JSON.stringify(await computeEvalWitness(payload)));
+    return;
+  }
+
+  if (payload.action === "eval_score_opening") {
+    // Deferred selective disclosure: check that a revealed (K, N, r_S) opens the
+    // published score commitment, without needing the per-batch transcript.
     const poseidon = await circomlibjs.buildPoseidon();
-    const benchmarkField = BigInt(fieldFromHex(payload.benchmarkDigest));
-    const evalTranscriptField = BigInt(fieldFromHex(payload.evalTranscriptDigest));
-    const exactScore = BigInt(payload.exactScore);
-    const transcriptSampleCount = BigInt(payload.transcriptSampleCount);
-    const correctCount = BigInt(payload.correctCount);
-    const incorrectCount = BigInt(payload.incorrectCount);
-    const abstainCount = BigInt(payload.abstainCount);
-    const batchDigest = await computeBatchResultsDigest(
-      payload.batchCorrectCounts,
-      payload.batchIncorrectCounts,
-      payload.batchAbstainCounts
-    );
-    if (payload.batchCount && BigInt(payload.batchCount) !== BigInt(batchDigest.batchCount)) {
-      throw new Error("batchCount does not match the provided batch summary arrays");
-    }
-    if (
-      payload.batchResultsDigest &&
-      payload.batchResultsDigest.toLowerCase() !== batchDigest.batchResultsDigest.toLowerCase()
-    ) {
-      throw new Error("batchResultsDigest does not match the provided batch summary arrays");
-    }
-    if (correctCount + incorrectCount + abstainCount !== transcriptSampleCount) {
-      throw new Error("transcript summary counts must sum to transcriptSampleCount");
-    }
-    const totalBatchCorrect = batchDigest.batchCorrectCounts.reduce((sum, value) => sum + BigInt(value), 0n);
-    const totalBatchIncorrect = batchDigest.batchIncorrectCounts.reduce((sum, value) => sum + BigInt(value), 0n);
-    const totalBatchAbstain = batchDigest.batchAbstainCounts.reduce((sum, value) => sum + BigInt(value), 0n);
-    if (totalBatchCorrect !== correctCount || totalBatchIncorrect !== incorrectCount || totalBatchAbstain !== abstainCount) {
-      throw new Error("batch summary totals do not match aggregate transcript counts");
-    }
-    if (exactScore * transcriptSampleCount !== correctCount * 10000n) {
-      throw new Error("exactScore does not match correctCount / transcriptSampleCount");
-    }
-    const scoreCommitment = poseidon.F.toString(
-      poseidon([
-        BigInt(payload.attestationId),
-        benchmarkField,
-        evalTranscriptField,
-        exactScore,
-        BigInt(payload.salt),
-      ])
-    );
+    const correctTotal = BigInt(payload.correctTotal);
+    const sampleTotal = BigInt(payload.sampleTotal);
+    const scoreBlinding = parseFieldElement(payload.scoreBlinding, "scoreBlinding");
+    const recomputed = BigInt(poseidon.F.toString(poseidon([correctTotal, sampleTotal, scoreBlinding])));
     process.stdout.write(
       JSON.stringify({
-        benchmarkField: benchmarkField.toString(),
-        evalTranscriptField: evalTranscriptField.toString(),
-        batchResultsDigestField: batchDigest.batchResultsDigestField,
-        batchCount: batchDigest.batchCount,
-        batchCorrectCounts: Array.from({ length: MAX_EVAL_BATCHES }, (_, index) =>
-          batchDigest.batchCorrectCounts[index] ?? "0"
-        ),
-        batchIncorrectCounts: Array.from({ length: MAX_EVAL_BATCHES }, (_, index) =>
-          batchDigest.batchIncorrectCounts[index] ?? "0"
-        ),
-        batchAbstainCounts: Array.from({ length: MAX_EVAL_BATCHES }, (_, index) =>
-          batchDigest.batchAbstainCounts[index] ?? "0"
-        ),
-        exactScore: exactScore.toString(),
-        scoreCommitment,
+        scoreCommitment: recomputed.toString(),
+        matches: recomputed === BigInt(payload.scoreCommitment),
       })
     );
     return;
@@ -625,19 +599,11 @@ async function main() {
       sourceRegistry: pkg.sourceRegistry,
       attestationId: BigInt(pkg.attestationId),
       benchmarkDigest: pkg.benchmarkDigest,
-      evalTranscriptDigest: pkg.evalTranscriptDigest,
-      datasetSplitDigest: pkg.datasetSplitDigest,
-      inferenceConfigDigest: pkg.inferenceConfigDigest,
-      randomnessSeedDigest: pkg.randomnessSeedDigest,
-      transcriptSampleCount: Number(pkg.transcriptSampleCount),
-      transcriptVersion: Number(pkg.transcriptVersion),
-      batchCount: Number(pkg.batchCount),
-      batchResultsDigest: pkg.batchResultsDigest,
-      correctCount: Number(pkg.correctCount),
-      incorrectCount: Number(pkg.incorrectCount),
-      abstainCount: Number(pkg.abstainCount),
+      transcriptCommitment: BigInt(pkg.transcriptCommitment),
       scoreCommitment: BigInt(pkg.scoreCommitment),
       thresholdBps: Number(pkg.thresholdBps),
+      minSampleCount: Number(pkg.minSampleCount),
+      verdict: Number(pkg.verdict),
       evaluator: pkg.evaluator,
       evaluatorKeyId: pkg.evaluatorKeyId,
       evaluatorPolicyDigest: pkg.evaluatorPolicyDigest,

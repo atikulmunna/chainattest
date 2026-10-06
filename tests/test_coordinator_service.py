@@ -163,19 +163,15 @@ class CoordinatorServiceTests(unittest.TestCase):
                 dataset_split_digest="0x" + "22" * 32,
                 inference_config_digest="0x" + "33" * 32,
                 randomness_seed_digest="0x" + "44" * 32,
-                transcript_sample_count=100,
                 transcript_version=2,
                 batch_correct_counts=[20, 24, 23, 25],
                 batch_incorrect_counts=[2, 1, 3, 2],
                 batch_abstain_counts=[0, 0, 0, 0],
-                correct_count=92,
-                incorrect_count=8,
-                abstain_count=0,
                 threshold_bps=9200,
+                min_sample_count=50,
                 evaluator=evaluator,
                 evaluator_policy_digest="0x" + "66" * 32,
                 evaluator_policy_version=1,
-                salt=123456,
                 source_chain_id=11155111,
                 source_registry="0x00000000000000000000000000000000000000aa",
                 source_block_number=54322,
@@ -200,9 +196,19 @@ class CoordinatorServiceTests(unittest.TestCase):
         self.assertIn("pA", package["proof"])
         self.assertIn("pB", package["proof"])
         self.assertIn("pC", package["proof"])
-        self.assertEqual(len(package["publicSignals"]), 7)
+        self.assertEqual(len(package["publicSignals"]), 8)
         self.assertTrue(Path(result["proof_path"]).exists())
         self.assertTrue(Path(result["signatures_path"]).exists())
+
+        # Score privacy: the relayed package carries commitments and the verdict,
+        # never a transcript count, and the proof's public signals match them.
+        self.assertEqual(package["packageVersion"], 2)
+        self.assertEqual(package["verdict"], 1)
+        for leaked in ("correctCount", "incorrectCount", "abstainCount", "transcriptSampleCount", "batchResultsDigest"):
+            self.assertNotIn(leaked, package)
+        self.assertEqual(package["publicSignals"][2], str(package["transcriptCommitment"]))
+        self.assertEqual(package["publicSignals"][3], str(package["scoreCommitment"]))
+        self.assertEqual(package["publicSignals"][5], str(package["minSampleCount"]))
 
     def test_state_and_audit_persistence_do_not_leave_lock_files(self) -> None:
         input_path = self.temp_dir / "input.json"

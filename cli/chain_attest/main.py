@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,12 @@ app = typer.Typer(help="ChainAttest CLI helpers for manifests, witnesses, and re
 
 BN254_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617
 ZERO_BYTES32 = "0x" + "00" * 32
+MAX_EVAL_BATCHES = 4
+EVAL_COUNT_LIMIT = 2**32
+MAX_THRESHOLD_BPS = 10_000
+EVAL_PACKAGE_VERSION = 2
+EVAL_CIRCUIT_VERSION = 4
+EVAL_PUBLIC_SIGNAL_COUNT = 8
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CRYPTO_BRIDGE = Path(__file__).resolve().with_name("crypto_bridge.js")
 
@@ -36,6 +43,18 @@ def field_from_hex(hex_value: str) -> int:
 
 def parse_csv_ints(values: str) -> list[int]:
     return [int(part.strip()) for part in values.split(",") if part.strip()]
+
+
+def fresh_blinding() -> int:
+    # A uniformly random BN254 field element. Small or reused blindings make the
+    # Poseidon commitments brute-forceable over the few possible scores.
+    return secrets.randbelow(BN254_FIELD_MODULUS)
+
+
+def validate_blinding(value: int, name: str) -> int:
+    if not 0 <= value < BN254_FIELD_MODULUS:
+        raise typer.BadParameter(f"{name} must be a BN254 field element in [0, p)")
+    return value
 
 
 def normalize_address(address: str) -> str:
@@ -160,142 +179,144 @@ def register_eval_claim(
     dataset_split_digest: str = typer.Option(..., help="0x bytes32 dataset split digest"),
     inference_config_digest: str = typer.Option(..., help="0x bytes32 inference config digest"),
     randomness_seed_digest: str = typer.Option(..., help="0x bytes32 randomness seed digest"),
-    transcript_sample_count: int = typer.Option(..., help="Structured transcript sample count"),
     transcript_version: int = typer.Option(2, help="Transcript schema version"),
     batch_correct_counts: str = typer.Option(..., help="Comma-separated per-batch correct counts"),
     batch_incorrect_counts: str = typer.Option(..., help="Comma-separated per-batch incorrect counts"),
-    batch_abstain_counts: str = typer.Option("0", help="Comma-separated per-batch abstain counts"),
+    batch_abstain_counts: str = typer.Option("", help="Comma-separated per-batch abstain counts (default: none)"),
     threshold_bps: int = typer.Option(..., help="Threshold in basis points"),
+    min_sample_count: int = typer.Option(1, help="Public lower bound the hidden sample count must meet"),
     evaluator: str = typer.Option(..., help="Evaluator EVM address"),
     evaluator_policy_digest: str = typer.Option(..., help="0x bytes32 evaluator policy digest"),
     evaluator_policy_version: int = typer.Option(1, help="Evaluator policy version"),
-    output: Path = typer.Option(..., help="Output JSON eval manifest path"),
+    output: Path = typer.Option(..., help="Output private eval claim manifest path"),
 ) -> None:
+    """Record the evaluator's private structured summary; its counts never leave it in plaintext."""
     correct_counts = parse_csv_ints(batch_correct_counts)
     incorrect_counts = parse_csv_ints(batch_incorrect_counts)
-    abstain_counts = parse_csv_ints(batch_abstain_counts)
+    abstain_counts = parse_csv_ints(batch_abstain_counts) or [0] * len(correct_counts)
     if len(correct_counts) != len(incorrect_counts) or len(correct_counts) != len(abstain_counts):
         raise typer.BadParameter("batch count lists must have the same number of entries")
     if not correct_counts:
         raise typer.BadParameter("at least one batch summary is required")
-    correct_count = sum(correct_counts)
-    incorrect_count = sum(incorrect_counts)
-    abstain_count = sum(abstain_counts)
-    batch_digest = run_bridge(
-        {
-            "action": "batch_results_digest",
-            "batchCorrectCounts": batch_correct_counts,
-            "batchIncorrectCounts": batch_incorrect_counts,
-            "batchAbstainCounts": batch_abstain_counts,
-        }
-    )
-    if correct_count + incorrect_count + abstain_count != transcript_sample_count:
-        raise typer.BadParameter(
-            "batch summary totals must equal transcript-sample-count"
-        )
-    transcript = run_bridge(
-        {
-            "action": "transcript_digest",
-            "attestationId": str(attestation_id),
-            "benchmarkDigest": benchmark_digest,
-            "datasetSplitDigest": dataset_split_digest,
-            "inferenceConfigDigest": inference_config_digest,
-            "randomnessSeedDigest": randomness_seed_digest,
-            "transcriptSampleCount": transcript_sample_count,
-            "transcriptVersion": transcript_version,
-            "batchCount": int(batch_digest["batchCount"]),
-            "batchResultsDigest": batch_digest["batchResultsDigest"],
-            "correctCount": correct_count,
-            "incorrectCount": incorrect_count,
-            "abstainCount": abstain_count,
-        }
-    )
+    if len(correct_counts) > MAX_EVAL_BATCHES:
+        raise typer.BadParameter(f"at most {MAX_EVAL_BATCHES} batches are supported")
+    for counts in (correct_counts, incorrect_counts, abstain_counts):
+        if any(not 0 <= count < EVAL_COUNT_LIMIT for count in counts):
+            raise typer.BadParameter("batch counts must be integers in [0, 2^32)")
+    batch_totals = [sum(batch) for batch in zip(correct_counts, incorrect_counts, abstain_counts)]
+    if any(total == 0 for total in batch_totals):
+        raise typer.BadParameter("every batch must contain at least one sample")
+    if not 0 <= threshold_bps <= MAX_THRESHOLD_BPS:
+        raise typer.BadParameter("threshold-bps must be in [0, 10000]")
+    if not 1 <= min_sample_count < EVAL_COUNT_LIMIT:
+        raise typer.BadParameter("min-sample-count must be in [1, 2^32)")
+    if sum(batch_totals) < min_sample_count:
+        raise typer.BadParameter("the batch summary has fewer samples than min-sample-count")
 
+    evaluator_address = normalize_address(evaluator)
     manifest = {
         "attestation_id": str(attestation_id),
         "benchmark_digest": benchmark_digest,
-        "eval_transcript_digest": transcript["evalTranscriptDigest"],
         "dataset_split_digest": dataset_split_digest,
         "inference_config_digest": inference_config_digest,
         "randomness_seed_digest": randomness_seed_digest,
-        "transcript_sample_count": transcript_sample_count,
         "transcript_version": transcript_version,
-        "batch_count": int(batch_digest["batchCount"]),
-        "batch_results_digest": batch_digest["batchResultsDigest"],
         "batch_correct_counts": correct_counts,
         "batch_incorrect_counts": incorrect_counts,
         "batch_abstain_counts": abstain_counts,
-        "correct_count": correct_count,
-        "incorrect_count": incorrect_count,
-        "abstain_count": abstain_count,
         "threshold_bps": threshold_bps,
-        "evaluator": normalize_address(evaluator),
-        "evaluator_key_id": transcript["evaluatorKeyId"] if "evaluatorKeyId" in transcript else None,
+        "min_sample_count": min_sample_count,
+        "evaluator": evaluator_address,
+        "evaluator_key_id": run_bridge({"action": "evaluator_key_id", "evaluator": evaluator_address})[
+            "evaluatorKeyId"
+        ],
         "evaluator_policy_digest": evaluator_policy_digest,
         "evaluator_policy_version": evaluator_policy_version,
     }
-    manifest["evaluator_key_id"] = run_bridge(
-        {"action": "evaluator_key_id", "evaluator": manifest["evaluator"]}
-    )["evaluatorKeyId"]
     dump_json(output, manifest)
-    print(f"[green]Wrote eval claim manifest to[/green] {output}")
+    print(f"[green]Wrote private eval claim manifest to[/green] {output}")
 
 
 @app.command("build-eval-input")
 def build_eval_input(
-    manifest: Path = typer.Option(..., help="Eval claim manifest JSON"),
-    salt: int = typer.Option(..., help="Private salt field element"),
-    output: Path = typer.Option(..., help="Output eval witness JSON"),
+    manifest: Path = typer.Option(..., help="Private eval claim manifest JSON"),
+    output: Path = typer.Option(..., help="Output eval witness JSON (the private commitment opening)"),
+    transcript_blinding: int | None = typer.Option(
+        None, help="Transcript blinding r_T; omit to sample a fresh random one (recommended)"
+    ),
+    score_blinding: int | None = typer.Option(
+        None, help="Score blinding r_S; omit to sample a fresh random one (recommended)"
+    ),
 ) -> None:
     claim = load_json(manifest)
-    score = run_bridge(
-        {
-            "action": "eval_score_from_counts",
-            "transcriptSampleCount": claim["transcript_sample_count"],
-            "correctCount": claim["correct_count"],
-        }
-    )
-    witness_data = run_bridge(
+    r_t = fresh_blinding() if transcript_blinding is None else validate_blinding(transcript_blinding, "transcript-blinding")
+    r_s = fresh_blinding() if score_blinding is None else validate_blinding(score_blinding, "score-blinding")
+    witness = run_bridge(
         {
             "action": "eval_witness",
             "attestationId": claim["attestation_id"],
             "benchmarkDigest": claim["benchmark_digest"],
-            "evalTranscriptDigest": claim["eval_transcript_digest"],
-            "batchCount": claim["batch_count"],
-            "batchResultsDigest": claim["batch_results_digest"],
-            "transcriptSampleCount": claim["transcript_sample_count"],
-            "correctCount": claim["correct_count"],
-            "incorrectCount": claim["incorrect_count"],
-            "abstainCount": claim["abstain_count"],
-            "batchCorrectCounts": claim["batch_correct_counts"],
-            "batchIncorrectCounts": claim["batch_incorrect_counts"],
-            "batchAbstainCounts": claim["batch_abstain_counts"],
-            "exactScore": score["exactScore"],
-            "salt": str(salt),
+            "datasetSplitDigest": claim["dataset_split_digest"],
+            "inferenceConfigDigest": claim["inference_config_digest"],
+            "randomnessSeedDigest": claim["randomness_seed_digest"],
+            "transcriptVersion": str(claim["transcript_version"]),
+            "batchCorrectCounts": [str(value) for value in claim["batch_correct_counts"]],
+            "batchIncorrectCounts": [str(value) for value in claim["batch_incorrect_counts"]],
+            "batchAbstainCounts": [str(value) for value in claim["batch_abstain_counts"]],
+            "thresholdBps": str(claim["threshold_bps"]),
+            "minSampleCount": str(claim["min_sample_count"]),
+            "transcriptBlinding": str(r_t),
+            "scoreBlinding": str(r_s),
         }
     )
-
-    witness = {
-        "attestation_id": claim["attestation_id"],
-        "benchmark_digest_field": witness_data["benchmarkField"],
-        "eval_transcript_digest_field": witness_data["evalTranscriptField"],
-        "batch_results_digest_field": witness_data["batchResultsDigestField"],
-        "score_commitment": witness_data["scoreCommitment"],
-        "threshold_bps": str(claim["threshold_bps"]),
-        "circuit_version_id": "3",
-        "batch_count": witness_data["batchCount"],
-        "batch_correct_counts": witness_data["batchCorrectCounts"],
-        "batch_incorrect_counts": witness_data["batchIncorrectCounts"],
-        "batch_abstain_counts": witness_data["batchAbstainCounts"],
-        "transcript_sample_count": str(claim["transcript_sample_count"]),
-        "correct_count": str(claim["correct_count"]),
-        "incorrect_count": str(claim["incorrect_count"]),
-        "abstain_count": str(claim["abstain_count"]),
-        "exact_score": witness_data["exactScore"],
-        "salt": str(salt),
-    }
     dump_json(output, witness)
-    print(f"[green]Wrote eval witness input to[/green] {output}")
+    print(f"[green]Wrote private eval witness (commitment opening) to[/green] {output}")
+
+
+@app.command("export-score-opening")
+def export_score_opening(
+    witness: Path = typer.Option(..., help="Private eval witness JSON from build-eval-input"),
+    output: Path = typer.Option(..., help="Output score opening JSON to hand to an auditor"),
+) -> None:
+    """Extract only (K, N, r_S) from the witness, leaving the per-batch transcript private."""
+    data = load_json(witness)
+    batches = zip(data["batch_correct_counts"], data["batch_incorrect_counts"], data["batch_abstain_counts"])
+    opening = {
+        "correct_total": str(sum(int(value) for value in data["batch_correct_counts"])),
+        "sample_total": str(sum(int(c) + int(i) + int(a) for c, i, a in batches)),
+        "score_blinding": data["score_blinding"],
+        "score_commitment": data["score_commitment"],
+    }
+    dump_json(output, opening)
+    print(f"[green]Wrote score opening to[/green] {output}")
+
+
+@app.command("verify-score-opening")
+def verify_score_opening(
+    package: Path = typer.Option(..., help="Published eval relay package JSON"),
+    opening: Path = typer.Option(..., help="Score opening JSON from export-score-opening"),
+) -> None:
+    """Check that a disclosed (K, N, r_S) opens the score commitment in a published package."""
+    published = load_json(package)
+    disclosed = load_json(opening)
+    correct_total = int(disclosed["correct_total"])
+    sample_total = int(disclosed["sample_total"])
+    result = run_bridge(
+        {
+            "action": "eval_score_opening",
+            "correctTotal": str(correct_total),
+            "sampleTotal": str(sample_total),
+            "scoreBlinding": disclosed["score_blinding"],
+            "scoreCommitment": str(published["scoreCommitment"]),
+        }
+    )
+    if not result["matches"] or sample_total == 0:
+        print("[red]Opening does not match the published score commitment[/red]")
+        raise typer.Exit(code=1)
+    print(
+        f"[green]Score commitment opens to[/green] {correct_total}/{sample_total} "
+        f"({correct_total * 10_000 // sample_total} bps)"
+    )
 
 
 def load_optional_json(path: Path | None) -> Any:
@@ -438,7 +459,7 @@ def render_eval_package(
     claimed_at_block: int = typer.Option(...),
     adapter_id: str = typer.Option(...),
     finality_delay_blocks: int = typer.Option(...),
-    eval_circuit_version: int = typer.Option(3),
+    eval_circuit_version: int = typer.Option(EVAL_CIRCUIT_VERSION),
     evaluator_signature: str = typer.Option("0x", help="Optional evaluator signature"),
     proof_file: Path | None = typer.Option(None, help="Optional Groth16 proof JSON"),
     public_signals_file: Path | None = typer.Option(None, help="Optional public signals JSON"),
@@ -451,8 +472,10 @@ def render_eval_package(
     public_signals = normalize_public_signals(load_optional_json(public_signals_file))
     signatures = load_optional_json(signatures_file) or []
 
+    # Only commitments, the threshold, the sample-size floor, and the verdict leave
+    # the private manifest and witness; no count is copied into the package.
     package = {
-        "packageVersion": 1,
+        "packageVersion": EVAL_PACKAGE_VERSION,
         "packageType": 2,
         "sourceChainId": str(source_chain_id),
         "sourceSystemId": source_system_id,
@@ -463,19 +486,11 @@ def render_eval_package(
         "sourceBlockHash": source_block_hash,
         "attestationId": claim["attestation_id"],
         "benchmarkDigest": claim["benchmark_digest"],
-        "evalTranscriptDigest": claim["eval_transcript_digest"],
-        "datasetSplitDigest": claim["dataset_split_digest"],
-        "inferenceConfigDigest": claim["inference_config_digest"],
-        "randomnessSeedDigest": claim["randomness_seed_digest"],
-        "transcriptSampleCount": claim["transcript_sample_count"],
-        "transcriptVersion": claim["transcript_version"],
-        "batchCount": claim["batch_count"],
-        "batchResultsDigest": claim["batch_results_digest"],
-        "correctCount": claim["correct_count"],
-        "incorrectCount": claim["incorrect_count"],
-        "abstainCount": claim["abstain_count"],
+        "transcriptCommitment": eval_witness["transcript_commitment"],
         "scoreCommitment": eval_witness["score_commitment"],
         "thresholdBps": claim["threshold_bps"],
+        "minSampleCount": claim["min_sample_count"],
+        "verdict": int(eval_witness["verdict"]),
         "evaluator": claim["evaluator"],
         "evaluatorKeyId": claim["evaluator_key_id"],
         "evaluatorPolicyDigest": claim["evaluator_policy_digest"],
@@ -512,7 +527,7 @@ def render_eval_revoke_package(
         "signatures": load_optional_json(signatures_file) or [],
         "evaluatorSignature": "0x",
         "proof": zero_groth16_proof(),
-        "publicSignals": zero_public_signals(7),
+        "publicSignals": zero_public_signals(EVAL_PUBLIC_SIGNAL_COUNT),
     }
     dump_json(output, revoke_package)
     print(f"[green]Wrote eval revoke package to[/green] {output}")

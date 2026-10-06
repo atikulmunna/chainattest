@@ -11,13 +11,14 @@ from urllib import request as urllib_request
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_TAG = "proving-artifacts-v1"
-ARTIFACT_NAME = "chainattest-proving-artifacts-v1.tar.gz"
+# v2: blinded eval circuit (version 4); the semantic artifacts are unchanged from v1.
+ARTIFACT_TAG = "proving-artifacts-v2"
+ARTIFACT_NAME = "chainattest-proving-artifacts-v2.tar.gz"
 ARTIFACT_URL = (
     "https://github.com/atikulmunna/chainattest/releases/download/"
     f"{ARTIFACT_TAG}/{ARTIFACT_NAME}"
 )
-ARCHIVE_SHA256 = "4e1b006d4adbf5b460867fce8c4119286c6d05c8f73bc279bf5bc8ff658527df"
+ARCHIVE_SHA256 = "16f11588722ddd5d3f129ff0cb1e2bb5d99c3df20e3557e524b735af2e10ba15"
 EXPECTED_FILES = {
     "circuits/semantic_attestation_js/semantic_attestation.wasm": (
         "e1c3a14ae58d6a6a85a0572647064f90a93954271499949d08f04e2d2bba9f1b"
@@ -26,10 +27,10 @@ EXPECTED_FILES = {
         "6c9956fc938799e3736f375431b217e786c120abf6649c64d9dd52e239de9341"
     ),
     "circuits/eval_threshold_js/eval_threshold.wasm": (
-        "11ab9248aec1eb6ebb39b1f3531de414d76b1ea7ec684b45bb568e6a4fc2bd7d"
+        "8b4e7fdf35b032eaf75ce6fbfbf9f3c689e398036f6d503afbb29d5aa3195ff8"
     ),
     "circuits/eval_threshold_final.zkey": (
-        "a0675dcf49482e02c4f5276a91334c76fdf1c61b2bb098ecf3667f8bbe79aee3"
+        "1592b22b96910ad52a9cdde3b09764a5db26bb9613bebdade70a848ba22d3a65"
     ),
 }
 

@@ -14,7 +14,10 @@
  *     5. export solidity verifier, rename the contract, and copy it into
  *        contracts/src/generated/<Contract>.sol
  *     6. regenerate the committed test-fixture proof + public signals from the
- *        committed fixture input, then groth16-verify them as a self-test.
+ *        committed fixture input (the eval circuit also refreshes a FAIL-verdict
+ *        fixture), then groth16-verify them as a self-test.
+ *     7. eval only: run the negative-witness constraint checks
+ *        (scripts/check_eval_constraints.js).
  *
  * Usage:
  *   node scripts/build_circuits.js                 # build both circuits
@@ -58,6 +61,12 @@ const CIRCUITS = {
     fixtureInput: "eval_input.json",
     fixtureProof: "eval_proof.json",
     fixturePublic: "eval_public.json",
+    // A FAIL-verdict witness, so the destination's PASS-only policy is testable
+    // against a genuinely valid proof.
+    extraFixtures: [
+      { input: "eval_fail_input.json", proof: "eval_fail_proof.json", public: "eval_fail_public.json" },
+    ],
+    constraintChecks: "check_eval_constraints.js",
   },
 };
 
@@ -182,20 +191,31 @@ async function buildCircuit(key) {
   fs.writeFileSync(path.join(GENERATED_DIR, `${contractName}.sol`), renamed);
   log(`  wrote contracts/src/generated/${contractName}.sol`);
 
-  // 6. regenerate committed fixture proof + public, then self-verify
-  const inputPath = path.join(FIXTURES_DIR, cfg.fixtureInput);
-  const proofPath = path.join(FIXTURES_DIR, cfg.fixtureProof);
-  const publicPath = path.join(FIXTURES_DIR, cfg.fixturePublic);
+  // 6. regenerate committed fixture proofs + public signals, then self-verify
   const wasm = path.join(CIRCUITS_ROOT, `${circuit}_js`, `${circuit}.wasm`);
-  snarkjs(["groth16", "fullprove", inputPath, wasm, zkeyFinal, proofPath, publicPath]);
-  const verify = snarkjs(
-    ["groth16", "verify", `${circuit}_verification_key.json`, publicPath, proofPath],
-    { capture: true }
-  );
-  if (!/\bOK!/.test(verify)) {
-    throw new Error(`Self-test verification FAILED for ${circuit}`);
+  const fixtures = [
+    { input: cfg.fixtureInput, proof: cfg.fixtureProof, public: cfg.fixturePublic },
+    ...(cfg.extraFixtures || []),
+  ];
+  for (const fixture of fixtures) {
+    const inputPath = path.join(FIXTURES_DIR, fixture.input);
+    const proofPath = path.join(FIXTURES_DIR, fixture.proof);
+    const publicPath = path.join(FIXTURES_DIR, fixture.public);
+    snarkjs(["groth16", "fullprove", inputPath, wasm, zkeyFinal, proofPath, publicPath]);
+    const verify = snarkjs(
+      ["groth16", "verify", `${circuit}_verification_key.json`, publicPath, proofPath],
+      { capture: true }
+    );
+    if (!/\bOK!/.test(verify)) {
+      throw new Error(`Self-test verification FAILED for ${circuit} (${fixture.input})`);
+    }
   }
-  log(`  self-test: proof verifies OK, fixtures refreshed`);
+  log(`  self-test: ${fixtures.length} fixture proof(s) verify OK, fixtures refreshed`);
+
+  // 7. negative-witness constraint checks, where the circuit defines them
+  if (cfg.constraintChecks) {
+    run("node", [path.join(__dirname, cfg.constraintChecks)]);
+  }
 }
 
 async function main() {

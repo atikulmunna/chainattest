@@ -2,26 +2,21 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://chainattest.local/schemas/eval_claim.schema.json",
   "title": "EvalClaimManifest",
+  "description": "Private evaluator manifest. The batch counts never leave it in plaintext: the relay package carries only the Poseidon transcript and score commitments built from it.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "attestation_id",
     "benchmark_digest",
-    "eval_transcript_digest",
     "dataset_split_digest",
     "inference_config_digest",
     "randomness_seed_digest",
-    "transcript_sample_count",
     "transcript_version",
-    "batch_count",
-    "batch_results_digest",
     "batch_correct_counts",
     "batch_incorrect_counts",
     "batch_abstain_counts",
-    "correct_count",
-    "incorrect_count",
-    "abstain_count",
     "threshold_bps",
+    "min_sample_count",
     "evaluator",
     "evaluator_key_id",
     "evaluator_policy_digest",
@@ -33,10 +28,6 @@
       "pattern": "^[0-9]+$"
     },
     "benchmark_digest": {
-      "type": "string",
-      "pattern": "^0x[a-fA-F0-9]{64}$"
-    },
-    "eval_transcript_digest": {
       "type": "string",
       "pattern": "^0x[a-fA-F0-9]{64}$"
     },
@@ -52,22 +43,9 @@
       "type": "string",
       "pattern": "^0x[a-fA-F0-9]{64}$"
     },
-    "transcript_sample_count": {
-      "type": "integer",
-      "minimum": 1
-    },
     "transcript_version": {
       "type": "integer",
       "minimum": 1
-    },
-    "batch_count": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 4
-    },
-    "batch_results_digest": {
-      "type": "string",
-      "pattern": "^0x[a-fA-F0-9]{64}$"
     },
     "batch_correct_counts": {
       "type": "array",
@@ -75,7 +53,8 @@
       "maxItems": 4,
       "items": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "maximum": 4294967295
       }
     },
     "batch_incorrect_counts": {
@@ -84,7 +63,8 @@
       "maxItems": 4,
       "items": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "maximum": 4294967295
       }
     },
     "batch_abstain_counts": {
@@ -93,25 +73,19 @@
       "maxItems": 4,
       "items": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "maximum": 4294967295
       }
-    },
-    "correct_count": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "incorrect_count": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "abstain_count": {
-      "type": "integer",
-      "minimum": 0
     },
     "threshold_bps": {
       "type": "integer",
       "minimum": 0,
       "maximum": 10000
+    },
+    "min_sample_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
     },
     "evaluator": {
       "type": "string",

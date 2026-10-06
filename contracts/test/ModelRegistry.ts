@@ -24,24 +24,32 @@ describe("ModelRegistry", function () {
   function sampleEvalInput(evaluatorAddress: string) {
     return {
       benchmarkDigest: ethers.keccak256(ethers.toUtf8Bytes("benchmark")),
-      evalTranscriptDigest: ethers.keccak256(ethers.toUtf8Bytes("transcript")),
-      datasetSplitDigest: ethers.keccak256(ethers.toUtf8Bytes("dataset-split")),
-      inferenceConfigDigest: ethers.keccak256(ethers.toUtf8Bytes("inference-config")),
-      randomnessSeedDigest: ethers.keccak256(ethers.toUtf8Bytes("randomness-seed")),
-      transcriptSampleCount: 100,
-      transcriptVersion: 2,
-      batchCount: 4,
-      batchResultsDigest: ethers.keccak256(ethers.toUtf8Bytes("batch-results")),
-      correctCount: 92,
-      incorrectCount: 8,
-      abstainCount: 0,
+      transcriptCommitment: 1234n,
       scoreCommitment: 9999n,
       thresholdBps: 9000,
+      minSampleCount: 50,
+      verdict: 1,
       evaluator: evaluatorAddress,
       evaluatorKeyId: ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address"], [evaluatorAddress])),
       evaluatorPolicyDigest: ethers.keccak256(ethers.toUtf8Bytes("policy:top1-accuracy-v1")),
       evaluatorPolicyVersion: 1
     };
+  }
+
+  function registerEvalClaim(registry: any, attestationId: bigint, input: ReturnType<typeof sampleEvalInput>) {
+    return registry.registerEvalClaim(
+      attestationId,
+      input.benchmarkDigest,
+      input.transcriptCommitment,
+      input.scoreCommitment,
+      input.thresholdBps,
+      input.minSampleCount,
+      input.verdict,
+      input.evaluator,
+      input.evaluatorKeyId,
+      input.evaluatorPolicyDigest,
+      input.evaluatorPolicyVersion
+    );
   }
 
   it("registers attestations and tracks ownership and lineage", async function () {
@@ -111,50 +119,10 @@ describe("ModelRegistry", function () {
     );
 
     const evalInput = sampleEvalInput(evaluator.address);
-    await registry.registerEvalClaim(
-      2n,
-      evalInput.benchmarkDigest,
-      evalInput.evalTranscriptDigest,
-      evalInput.datasetSplitDigest,
-      evalInput.inferenceConfigDigest,
-      evalInput.randomnessSeedDigest,
-      evalInput.transcriptSampleCount,
-      evalInput.transcriptVersion,
-      evalInput.batchCount,
-      evalInput.batchResultsDigest,
-      evalInput.correctCount,
-      evalInput.incorrectCount,
-      evalInput.abstainCount,
-      evalInput.scoreCommitment,
-      evalInput.thresholdBps,
-      evalInput.evaluator,
-      evalInput.evaluatorKeyId,
-      evalInput.evaluatorPolicyDigest,
-      evalInput.evaluatorPolicyVersion
-    );
+    await registerEvalClaim(registry, 2n, evalInput);
 
     await expect(
-      registry.registerEvalClaim(
-        2n,
-        evalInput.benchmarkDigest,
-        evalInput.evalTranscriptDigest,
-        evalInput.datasetSplitDigest,
-        evalInput.inferenceConfigDigest,
-        evalInput.randomnessSeedDigest,
-        evalInput.transcriptSampleCount,
-        evalInput.transcriptVersion,
-        evalInput.batchCount,
-        evalInput.batchResultsDigest,
-        evalInput.correctCount,
-        evalInput.incorrectCount,
-        evalInput.abstainCount,
-        evalInput.scoreCommitment,
-        evalInput.thresholdBps,
-        evalInput.evaluator,
-        evalInput.evaluatorKeyId,
-        evalInput.evaluatorPolicyDigest,
-        evalInput.evaluatorPolicyVersion
-      )
+      registerEvalClaim(registry, 2n, evalInput)
     ).to.be.revertedWithCustomError(registry, "EvalClaimAlreadyExists");
   });
 
@@ -172,56 +140,73 @@ describe("ModelRegistry", function () {
 
     const evalInput = sampleEvalInput(evaluator.address);
     await expect(
-      registry.registerEvalClaim(
-        1n,
-        evalInput.benchmarkDigest,
-        evalInput.evalTranscriptDigest,
-        evalInput.datasetSplitDigest,
-        evalInput.inferenceConfigDigest,
-        evalInput.randomnessSeedDigest,
-        evalInput.transcriptSampleCount,
-        evalInput.transcriptVersion,
-        evalInput.batchCount,
-        evalInput.batchResultsDigest,
-        evalInput.correctCount,
-        evalInput.incorrectCount,
-        evalInput.abstainCount,
-        evalInput.scoreCommitment,
-        evalInput.thresholdBps,
-        evalInput.evaluator,
-        evalInput.evaluatorKeyId,
-        evalInput.evaluatorPolicyDigest,
-        evalInput.evaluatorPolicyVersion
-      )
+      registerEvalClaim(registry, 1n, evalInput)
     )
       .to.emit(registry, "EvalClaimRegistered")
       .withArgs(
         1n,
         evalInput.benchmarkDigest,
-        evalInput.evalTranscriptDigest,
+        evalInput.transcriptCommitment,
         evalInput.scoreCommitment,
         evalInput.thresholdBps,
+        evalInput.minSampleCount,
+        evalInput.verdict,
         evalInput.evaluator,
         evalInput.evaluatorPolicyDigest,
         evalInput.evaluatorPolicyVersion
       );
 
     const stored = await registry.getEvalClaim(1n, evalInput.benchmarkDigest);
-    expect(stored.datasetSplitDigest).to.equal(evalInput.datasetSplitDigest);
-    expect(stored.inferenceConfigDigest).to.equal(evalInput.inferenceConfigDigest);
-    expect(stored.randomnessSeedDigest).to.equal(evalInput.randomnessSeedDigest);
-    expect(stored.transcriptSampleCount).to.equal(evalInput.transcriptSampleCount);
-    expect(stored.transcriptVersion).to.equal(evalInput.transcriptVersion);
-    expect(stored.batchCount).to.equal(evalInput.batchCount);
-    expect(stored.batchResultsDigest).to.equal(evalInput.batchResultsDigest);
-    expect(stored.correctCount).to.equal(evalInput.correctCount);
-    expect(stored.incorrectCount).to.equal(evalInput.incorrectCount);
-    expect(stored.abstainCount).to.equal(evalInput.abstainCount);
+    expect(stored.transcriptCommitment).to.equal(evalInput.transcriptCommitment);
+    expect(stored.scoreCommitment).to.equal(evalInput.scoreCommitment);
+    expect(stored.thresholdBps).to.equal(evalInput.thresholdBps);
+    expect(stored.minSampleCount).to.equal(evalInput.minSampleCount);
+    expect(stored.verdict).to.equal(evalInput.verdict);
     expect(stored.evaluator).to.equal(evalInput.evaluator);
     expect(stored.evaluatorPolicyDigest).to.equal(evalInput.evaluatorPolicyDigest);
     expect(stored.evaluatorPolicyVersion).to.equal(evalInput.evaluatorPolicyVersion);
     expect(await registry.getEvalClaimBenchmarkDigests(1n)).to.deep.equal([evalInput.benchmarkDigest]);
     expect(await registry.isEvalClaimActive(1n, evalInput.benchmarkDigest)).to.equal(true);
+  });
+
+  it("exposes no plaintext transcript count or exact score", async function () {
+    const { registry } = await deployFixture();
+    const fields = registry.interface
+      .getFunction("getEvalClaim")!
+      .outputs[0].components!.map((component: any) => component.name);
+    const registerInputs = registry.interface
+      .getFunction("registerEvalClaim")!
+      .inputs.map((input: any) => input.name);
+    for (const leaked of ["correctCount", "incorrectCount", "abstainCount", "transcriptSampleCount", "exactScore"]) {
+      expect(fields).to.not.include(leaked);
+      expect(registerInputs).to.not.include(leaked);
+    }
+    expect(fields).to.include.members(["transcriptCommitment", "scoreCommitment", "verdict"]);
+  });
+
+  it("rejects eval claims with a zero minimum sample count or a non-binary verdict", async function () {
+    const { evaluator, registry } = await deployFixture();
+    const input = sampleAttestationInput();
+    await registry.registerAttestation(
+      input.modelFileDigest,
+      input.weightsRoot,
+      input.datasetCommitment,
+      input.trainingCommitment,
+      input.metadataDigest,
+      input.parentAttestationId
+    );
+
+    const evalInput = sampleEvalInput(evaluator.address);
+    await expect(
+      registerEvalClaim(registry, 1n, { ...evalInput, minSampleCount: 0 })
+    ).to.be.revertedWithCustomError(registry, "InvalidMinSampleCount");
+    await expect(registerEvalClaim(registry, 1n, { ...evalInput, verdict: 2 })).to.be.revertedWithCustomError(
+      registry,
+      "InvalidVerdict"
+    );
+    await expect(
+      registerEvalClaim(registry, 1n, { ...evalInput, transcriptCommitment: 0n })
+    ).to.be.revertedWithCustomError(registry, "TranscriptCommitmentRequired");
   });
 
   it("invalidates active eval claims when the parent attestation is revoked", async function () {
@@ -237,27 +222,7 @@ describe("ModelRegistry", function () {
     );
 
     const evalInput = sampleEvalInput(evaluator.address);
-    await registry.registerEvalClaim(
-      1n,
-      evalInput.benchmarkDigest,
-      evalInput.evalTranscriptDigest,
-      evalInput.datasetSplitDigest,
-      evalInput.inferenceConfigDigest,
-      evalInput.randomnessSeedDigest,
-      evalInput.transcriptSampleCount,
-      evalInput.transcriptVersion,
-      evalInput.batchCount,
-      evalInput.batchResultsDigest,
-      evalInput.correctCount,
-      evalInput.incorrectCount,
-      evalInput.abstainCount,
-      evalInput.scoreCommitment,
-      evalInput.thresholdBps,
-      evalInput.evaluator,
-      evalInput.evaluatorKeyId,
-      evalInput.evaluatorPolicyDigest,
-      evalInput.evaluatorPolicyVersion
-    );
+    await registerEvalClaim(registry, 1n, evalInput);
 
     await expect(registry.connect(other).revokeAttestation(1n)).to.be.revertedWithCustomError(
       registry,

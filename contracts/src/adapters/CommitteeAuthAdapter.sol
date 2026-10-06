@@ -335,9 +335,10 @@ contract CommitteeAuthAdapter is EIP712, ISourceAuthAdapter {
                 pkg.sourceRegistry,
                 pkg.attestationId,
                 pkg.benchmarkDigest,
-                pkg.evalTranscriptDigest,
+                pkg.transcriptCommitment,
                 pkg.scoreCommitment,
                 pkg.thresholdBps,
+                pkg.minSampleCount,
                 pkg.evaluatorKeyId,
                 pkg.claimedAtBlock,
                 pkg.packageType == ChainAttestTypes.PACKAGE_TYPE_EVAL_CLAIM_REVOKE

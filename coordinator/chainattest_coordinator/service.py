@@ -105,19 +105,14 @@ class EvalBundleRequest:
     dataset_split_digest: str
     inference_config_digest: str
     randomness_seed_digest: str
-    transcript_sample_count: int
     transcript_version: int
     batch_correct_counts: list[int]
     batch_incorrect_counts: list[int]
     batch_abstain_counts: list[int]
-    correct_count: int
-    incorrect_count: int
-    abstain_count: int
     threshold_bps: int
     evaluator: str
     evaluator_policy_digest: str
     evaluator_policy_version: int
-    salt: int
     source_chain_id: int
     source_registry: str
     source_block_number: int
@@ -129,7 +124,11 @@ class EvalBundleRequest:
     source_system_id: str = ZERO_BYTES32
     source_channel_id: str = ZERO_BYTES32
     source_tx_id: str = ZERO_BYTES32
-    eval_circuit_version: int = 3
+    min_sample_count: int = 1
+    # Commitment blindings; None samples fresh CSPRNG randomness per claim.
+    transcript_blinding: int | None = None
+    score_blinding: int | None = None
+    eval_circuit_version: int = 4
     destination_chain_id: int | None = None
     destination_rpc_url: str | None = None
     destination_submitter_private_key: str | None = None
@@ -703,8 +702,6 @@ class CoordinatorService:
                 request.inference_config_digest,
                 "--randomness-seed-digest",
                 request.randomness_seed_digest,
-                "--transcript-sample-count",
-                str(request.transcript_sample_count),
                 "--transcript-version",
                 str(request.transcript_version),
                 "--batch-correct-counts",
@@ -715,6 +712,8 @@ class CoordinatorService:
                 self._csv(request.batch_abstain_counts),
                 "--threshold-bps",
                 str(request.threshold_bps),
+                "--min-sample-count",
+                str(request.min_sample_count),
                 "--evaluator",
                 request.evaluator,
                 "--evaluator-policy-digest",
@@ -724,15 +723,16 @@ class CoordinatorService:
                 "--output",
                 str(manifest_path),
             )
-            self._run_cli(
+            build_args = [
                 "build-eval-input",
                 "--manifest",
                 str(manifest_path),
-                "--salt",
-                str(request.salt),
                 "--output",
                 str(eval_input_path),
-            )
+            ]
+            build_args.extend(self._optional_int_args("--transcript-blinding", request.transcript_blinding))
+            build_args.extend(self._optional_int_args("--score-blinding", request.score_blinding))
+            self._run_cli(*build_args)
             if request.proof_file is None or request.public_signals_file is None:
                 self._generate_proof(
                     circuit_name="eval_threshold",
@@ -1010,6 +1010,11 @@ class CoordinatorService:
         if path is None:
             return []
         return [flag, str(path)]
+
+    def _optional_int_args(self, flag: str, value: int | None) -> list[str]:
+        if value is None:
+            return []
+        return [flag, str(value)]
 
     def _csv(self, values: list[int]) -> str:
         return ",".join(str(value) for value in values)
