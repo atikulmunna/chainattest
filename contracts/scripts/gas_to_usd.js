@@ -58,13 +58,17 @@ function main() {
   const baseline = JSON.parse(fs.readFileSync(BASELINE, "utf8"));
   const scenarios = parseScenarios();
 
+  const evm = baseline.sources.evm;
+  const fabric = baseline.sources.fabric;
   const items = [
-    { name: "Attestation (ChainAttest)", gas: Number(baseline.attestation.chainattest_gas) },
-    { name: "Attestation (generic bridge)", gas: Number(baseline.attestation.generic_bridge_gas) },
-    { name: "Attestation (naive anchor)", gas: Number(baseline.attestation.naive_anchor_gas) },
-    { name: "Eval claim (ChainAttest)", gas: Number(baseline.eval.chainattest_gas) },
-    { name: "Eval claim (generic bridge)", gas: Number(baseline.eval.generic_bridge_gas) },
-    { name: "Eval claim (naive anchor)", gas: Number(baseline.eval.naive_anchor_gas) },
+    { name: "Attestation (ChainAttest, EVM source)", gas: Number(evm.attestation.chainattest_gas) },
+    { name: "Attestation (ChainAttest, Fabric source)", gas: Number(fabric.attestation.chainattest_gas) },
+    { name: "Attestation (generic bridge)", gas: Number(evm.attestation.generic_bridge_gas) },
+    { name: "Attestation (naive anchor)", gas: Number(evm.attestation.naive_anchor_gas) },
+    { name: "Eval claim (ChainAttest, EVM source)", gas: Number(evm.eval.chainattest_gas) },
+    { name: "Eval claim (ChainAttest, Fabric source)", gas: Number(fabric.eval.chainattest_gas) },
+    { name: "Eval claim (generic bridge)", gas: Number(evm.eval.generic_bridge_gas) },
+    { name: "Eval claim (naive anchor)", gas: Number(evm.eval.naive_anchor_gas) },
   ];
 
   const rows = items.map((it) => ({
