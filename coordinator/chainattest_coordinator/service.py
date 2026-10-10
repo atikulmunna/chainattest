@@ -601,8 +601,9 @@ class CoordinatorService:
                 "--output",
                 str(semantic_input_path),
             )
+            proof_seconds = None
             if request.proof_file is None or request.public_signals_file is None:
-                self._generate_proof(
+                proof_seconds = self._generate_proof(
                     circuit_name="semantic_attestation",
                     input_path=semantic_input_path,
                     proof_path=proof_path,
@@ -668,6 +669,7 @@ class CoordinatorService:
                 "manifest_path": str(manifest_path),
                 "semantic_input_path": str(semantic_input_path),
                 "proof_path": str(proof_path),
+                "proof_seconds": proof_seconds,
                 "public_signals_path": str(public_signals_path),
                 "signatures_path": str(signatures_output) if signatures_output else None,
                 "package_path": str(package_path),
@@ -733,8 +735,9 @@ class CoordinatorService:
             build_args.extend(self._optional_int_args("--transcript-blinding", request.transcript_blinding))
             build_args.extend(self._optional_int_args("--score-blinding", request.score_blinding))
             self._run_cli(*build_args)
+            proof_seconds = None
             if request.proof_file is None or request.public_signals_file is None:
-                self._generate_proof(
+                proof_seconds = self._generate_proof(
                     circuit_name="eval_threshold",
                     input_path=eval_input_path,
                     proof_path=proof_path,
@@ -849,6 +852,7 @@ class CoordinatorService:
                 "manifest_path": str(manifest_path),
                 "eval_input_path": str(eval_input_path),
                 "proof_path": str(proof_path),
+                "proof_seconds": proof_seconds,
                 "public_signals_path": str(public_signals_path),
                 "signatures_path": str(signatures_output) if signatures_output else None,
                 "package_path": str(package_path),
@@ -1158,10 +1162,11 @@ class CoordinatorService:
         input_path: Path,
         proof_path: Path,
         public_signals_path: Path,
-    ) -> None:
+    ) -> float:
         proof_path.parent.mkdir(parents=True, exist_ok=True)
         public_signals_path.parent.mkdir(parents=True, exist_ok=True)
         wasm_path, zkey_path = self._proof_artifacts(circuit_name)
+        started = time.perf_counter()
         subprocess.run(
             [
                 "node",
@@ -1179,6 +1184,7 @@ class CoordinatorService:
             capture_output=True,
             text=True,
         )
+        return time.perf_counter() - started
 
     def _proof_artifacts(self, circuit_name: str) -> tuple[Path, Path]:
         if circuit_name == "semantic_attestation":
