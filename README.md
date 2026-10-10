@@ -104,8 +104,10 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - negative-witness constraint checks for the eval circuit (`circuits/scripts/check_eval_constraints.js`)
 - score-opening helpers for deferred selective disclosure (`chain_attest export-score-opening` / `verify-score-opening`)
 - Merkle `TREE_DEPTH` scaling sweep (`circuits/scripts/scaling_curve.js`)
+- evaluation-batch scaling sweep: `circuits/scripts/eval_batch_scaling.js` rebuilds the eval circuit for 1 to 4 batches and times proving, then `contracts/scripts/eval_batch_gas.ts` deploys each variant's verifier and measures the full eval-claim verification gas
+- repeated end-to-end benchmark (`scripts/benchmark_repeated.py --runs 30 --source-mode fabric`, or `evm`) that reports the median, mean, SD, and p95 of bundle, relay, and proof-generation time and destination gas
 - mainnet-equivalent gas→USD cost model (`contracts/scripts/gas_to_usd.js`)
-- evaluation outputs under `artifacts/eval/` (`baseline_comparison`, `scaling_curve`, `cost_model`)
+- evaluation outputs under `artifacts/eval/` (`baseline_comparison`, `scaling_curve`, `cost_model`, `eval_batch_scaling`, `repeated_benchmark_<mode>`)
 
 ## Repository Map
 
@@ -118,9 +120,10 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 | `committee/` | HTTP signer service, command fallback host, and signer clients |
 | `schemas/` | JSON schemas for structured attestation and eval inputs |
 | `tests/` | Python orchestration, persistence, signer-boundary, and operator tests |
-| `circuits/scripts/` | Reproducible circuit build and Merkle-depth scaling harness |
-| `contracts/scripts/` | Comparative gas baselines and gas→USD cost-model scripts |
+| `circuits/scripts/` | Reproducible circuit build, Merkle-depth and eval-batch scaling harnesses |
+| `contracts/scripts/` | Comparative gas baselines, eval-batch verification gas, and gas→USD cost-model scripts |
 | `scripts/run_demo.py` | Reproducible local/testnet demo and benchmark runner |
+| `scripts/benchmark_repeated.py` | Repeats the demo and summarizes timing and gas statistics |
 
 ## Runtime Baseline
 
