@@ -95,7 +95,6 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - artifact bundle generation under `artifacts/demo/`
 - machine-readable benchmark summary
 - markdown benchmark table
-- demo runbook and paper-support docs under `docs/`
 - heterogeneous source support for Fabric-style permissioned registries through committee-authenticated `sourceSystemId` packages with explicit channel and transaction IDs
 
 ### Evaluation and Reproducibility
@@ -107,7 +106,6 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 - Merkle `TREE_DEPTH` scaling sweep (`circuits/scripts/scaling_curve.js`)
 - mainnet-equivalent gas→USD cost model (`contracts/scripts/gas_to_usd.js`)
 - evaluation outputs under `artifacts/eval/` (`baseline_comparison`, `scaling_curve`, `cost_model`)
-- an assembled IEEE conference paper under `docs/paper/` (`chainattest_paper.tex`/`.pdf`, Overleaf-ready `chainattest_paper.zip`) built from these numbers, with the semantic circuit, threat model, and evaluation validated on a public testnet (see below)
 
 ## Repository Map
 
@@ -120,9 +118,6 @@ The coordinator prepares bundles, generates proofs, collects signatures, submits
 | `committee/` | HTTP signer service, command fallback host, and signer clients |
 | `schemas/` | JSON schemas for structured attestation and eval inputs |
 | `tests/` | Python orchestration, persistence, signer-boundary, and operator tests |
-| `docs/demo/` | Demo runbook, expected outputs, and troubleshooting |
-| `docs/paper/` | Assembled IEEE paper (`.tex`/`.pdf`/`.zip`) plus thesis, evaluation, related-work, threat-model, and testnet-setup docs |
-| `docs/figures/` | Mermaid figure sources and rendered PDF/PNG |
 | `circuits/scripts/` | Reproducible circuit build and Merkle-depth scaling harness |
 | `contracts/scripts/` | Comparative gas baselines and gas→USD cost-model scripts |
 | `scripts/run_demo.py` | Reproducible local/testnet demo and benchmark runner |
@@ -202,7 +197,7 @@ In `fabric` mode, the demo additionally emits:
 
 ### 4. Run On A Public Testnet (Sepolia)
 
-The same flow runs unmodified against a public Ethereum testnet (free — Sepolia ETH comes from a faucet, RPC from a free tier). `contracts/hardhat.config.ts` reads an env-gated `sepolia` network, and `run_demo.py` honors a `SEPOLIA_DEPLOYER_KEY` override.
+The same flow runs unmodified against a public Ethereum testnet (free: Sepolia ETH comes from a faucet, RPC from a free tier). `contracts/hardhat.config.ts` reads an env-gated `sepolia` network, and `run_demo.py` honors a `SEPOLIA_DEPLOYER_KEY` override.
 
 ```bash
 export SEPOLIA_RPC_URL="https://sepolia.infura.io/v3/<key>"
@@ -211,7 +206,7 @@ python scripts/run_demo.py --rpc-url "$SEPOLIA_RPC_URL" --output-root artifacts/
 node contracts/scripts/gas_to_usd.js   # mainnet-equivalent USD cost model
 ```
 
-Full step-by-step (RPC + faucet + cost model) is in `docs/paper/testnet_setup.md`. A validated run of the blinded eval design produced publicly verifiable attestation and eval transactions whose gas matched the local devnet within 24 gas (under 0.005%).
+A validated run of the blinded eval design produced publicly verifiable attestation and eval transactions whose gas matched the local devnet within 24 gas (under 0.005%).
 
 ## Demo Outputs
 
@@ -302,32 +297,6 @@ GitHub Actions currently covers:
 - operator CLI checks
 - a workflow-dispatch demo smoke run that uploads demo artifacts
 
-## Demo And Paper Support Docs
-
-### Demo Docs
-
-- `docs/demo/runbook.md`
-- `docs/demo/expected_outputs.md`
-- `docs/demo/troubleshooting.md`
-
-### Paper Docs
-
-- `docs/paper/chainattest_paper.tex` — assembled IEEE conference paper (with `.pdf` and Overleaf-ready `.zip`)
-- `docs/paper/README.md` — paper build note (LaTeX/Overleaf) and figure-render recipe
-- `docs/paper/testnet_setup.md` — free public-testnet (Sepolia) run guide
-- `docs/paper/contributions_and_thesis.md`
-- `docs/paper/evaluation_methodology.md`
-- `docs/paper/related_work_outline.md`
-- `docs/paper/threat_model.md`
-- `docs/paper/fabric_public_evaluation.md`
-
-### Figure Sources
-
-- `docs/figures/architecture.mmd`
-- `docs/figures/demo_flow.mmd`
-- `docs/figures/fabric_public_path.mmd`
-- `docs/figures/fabric_public_lifecycle.mmd`
-
 ## Known Prototype Limits
 
 This is a high-credibility research prototype, not a production launch.
@@ -347,9 +316,4 @@ The strongest next engineering moves are:
 1. move from committed transcript summaries toward signed or provable evaluator execution traces
 2. replace the local signer reference service with a stronger isolated signer or secret-manager-backed boundary
 3. extend durability and observability for multi-worker coordination
-4. expand benchmark depth and paper-facing evaluation outputs
-
-## Primary Documents
-
-- [docs/paper/chainattest_paper.pdf](docs/paper/chainattest_paper.pdf): the assembled paper
-- [docs/paper/threat_model.md](docs/paper/threat_model.md): trust assumptions and security properties
+4. expand benchmark depth and evaluation outputs

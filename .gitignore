@@ -30,3 +30,7 @@ tasks.md
 *srs*
 *SRS*
 ChainAttest_Protocol_and_Interface_Spec.md
+
+# Local-only backups and paper materials
+.local-backup/
+docs/
